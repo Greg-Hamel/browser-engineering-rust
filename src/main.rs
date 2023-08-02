@@ -1,7 +1,7 @@
 use openssl::ssl::{SslConnector, SslMethod};
 use std::collections::HashMap;
 use std::env;
-use std::io::{self, BufRead, BufReader, Cursor, Read, Write};
+use std::io::{self, BufRead, Cursor, Read, Write};
 use std::net::TcpStream;
 
 #[derive(Debug)]
@@ -17,6 +17,7 @@ struct HTTPRequest {
     method: String,
     hostname: String,
     path: String,
+    port: String,
     headers: HashMap<String, String>,
     data: String,
 }
@@ -39,26 +40,35 @@ struct HTTPResponse {
 }
 
 fn split_url(full_url: &str) -> URL {
-    let _schemes = ["http", "https", "file", "data"];
+    let mut url_copy = String::from(full_url);
+    let mut scheme = String::from("http");
 
-    let scheme_url: Vec<&str> = full_url.split("://").collect();
+    if url_copy.contains("://") {
+        let _schemes = ["http", "https", "file", "data"];
 
-    assert!(_schemes.contains(&scheme_url[0]));
+        let scheme_url: Vec<&str> = full_url.split("://").collect();
 
-    let mut port = if scheme_url[0] == "http" { "80" } else { "443" };
+        assert!(_schemes.contains(&scheme_url[0]));
 
-    let hostname_and_path = scheme_url[1].split_once('/').unwrap_or((scheme_url[1], ""));
+        scheme = String::from(scheme_url[0]);
+        url_copy = String::from(scheme_url[1]);
+    }
+
+    let hostname_and_path = url_copy.split_once('/').unwrap_or((&url_copy, ""));
 
     let mut hostname = hostname_and_path.0;
 
+    let mut port = if scheme == "http" { "80" } else { "443" };
+
     if hostname.contains(":") {
-        let hostname_port: Vec<&str> = hostname.split(":").collect();
-        hostname = hostname_port[0];
-        port = hostname_port[1];
+        let split_hostname_port: Vec<&str> = hostname.split(":").collect();
+
+        hostname = split_hostname_port[0];
+        port = split_hostname_port[1];
     }
 
     URL {
-        scheme: String::from(scheme_url[0]),
+        scheme: String::from(scheme),
         hostname: String::from(hostname),
         path: format!("/{}", hostname_and_path.1),
         port: String::from(port),
@@ -72,6 +82,7 @@ fn request(full_url: &str) -> io::Result<HTTPResponse> {
         http_version: String::from("1.0"),
         path: String::from(&url.path),
         headers: HashMap::new(),
+        port: String::from(&url.port),
         hostname: String::from(&url.hostname),
         method: String::from("GET"),
         data: String::from(""),
