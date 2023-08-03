@@ -12,10 +12,25 @@ struct URL {
     port: String,
 }
 
+enum Header {
+    Connection,
+    UserAgent,
+    Host,
+}
+
+impl Header {
+    fn as_str(&self) -> &'static str {
+        match self {
+            Header::Connection => "Connection",
+            Header::Host => "Host",
+            Header::UserAgent => "User-Agent",
+        }
+    }
+}
+
 struct HTTPRequest {
     http_version: String,
     method: String,
-    hostname: String,
     path: String,
     port: String,
     headers: HashMap<String, String>,
@@ -25,9 +40,25 @@ struct HTTPRequest {
 impl HTTPRequest {
     fn build(&self) -> String {
         format!(
-            "{} {} HTTP/{}\r\nHost:{}\r\n\r\n",
-            self.method, self.path, self.http_version, self.hostname
+            "{} {} HTTP/{}\r\n{}\r\n\r\n",
+            self.method,
+            self.path,
+            self.http_version,
+            self.build_headers()
         )
+    }
+
+    fn build_headers(&self) -> String {
+        let mut output = String::from("");
+
+        for (key, value) in &self.headers {
+            output.push_str(&key);
+            output.push_str(": ");
+            output.push_str(&value);
+            output.push_str("\r\n");
+        }
+
+        String::from(output)
     }
 }
 
@@ -39,7 +70,7 @@ struct HTTPResponse {
     data: String,
 }
 
-fn split_url(full_url: &str) -> URL {
+fn parse_url(full_url: &str) -> URL {
     let mut url_copy = String::from(full_url);
     let mut scheme = String::from("http");
 
@@ -76,21 +107,35 @@ fn split_url(full_url: &str) -> URL {
 }
 
 fn request(full_url: &str) -> io::Result<HTTPResponse> {
-    let url = split_url(full_url);
+    let url = parse_url(full_url);
+
+    let headers: HashMap<String, String> = HashMap::from([
+        (
+            String::from(Header::Host.as_str()),
+            String::from(&url.hostname),
+        ),
+        (
+            String::from(Header::Connection.as_str()),
+            String::from("close"),
+        ),
+        (
+            String::from(Header::UserAgent.as_str()),
+            String::from("Bored Browser"),
+        ),
+    ]);
 
     let request = HTTPRequest {
-        http_version: String::from("1.0"),
-        path: String::from(&url.path),
-        headers: HashMap::new(),
-        port: String::from(&url.port),
-        hostname: String::from(&url.hostname),
-        method: String::from("GET"),
         data: String::from(""),
+        http_version: String::from("1.1"),
+        headers,
+        method: String::from("GET"),
+        path: String::from(&url.path),
+        port: String::from(&url.port),
     };
 
     let mut res = vec![];
 
-    if url.scheme == "https" {
+    if url.scheme == "https" || request.port == "443" {
         let base_stream = TcpStream::connect(format!("{}:{}", &url.hostname, &url.port))
             .expect("Couldn't connect to the server...");
         let connector = SslConnector::builder(SslMethod::tls()).unwrap().build();
