@@ -2,7 +2,7 @@ use openssl::ssl::{SslConnector, SslMethod};
 use regex::Regex;
 use std::collections::HashMap;
 use std::env;
-use std::fs::File;
+use std::fs;
 use std::io::{self, BufRead, Cursor, Read, Write};
 use std::net::TcpStream;
 
@@ -156,9 +156,7 @@ fn parse_url(full_url: &str) -> URL {
     }
 }
 
-fn request(full_url: &str) -> io::Result<HTTPResponse> {
-    let url = parse_url(full_url);
-
+fn request(url: &URL) -> io::Result<HTTPResponse> {
     let headers: HashMap<String, String> = HashMap::from([
         (
             String::from(Header::Host.as_str()),
@@ -212,20 +210,7 @@ fn request(full_url: &str) -> io::Result<HTTPResponse> {
 
             stream.read_to_end(&mut res).unwrap();
         }
-        HttpScheme::Data => {
-            // _ is the content_type
-            let (_, data) = url.path.split_once(',').unwrap_or((&url.path, ""));
-
-            // Writing end-of-file.
-            let new_data = String::new() + data + "\r\n";
-
-            res = Vec::from(new_data.as_bytes())
-        }
-        HttpScheme::File => {
-            let mut file = File::open(&url.path).expect("File not found...");
-
-            file.read_to_end(&mut res).unwrap();
-        }
+        _ => {}
     }
 
     let mut res_stream = Cursor::new(res);
@@ -349,11 +334,35 @@ fn show(source: &str, only_body: bool) {
             current_tag += &character.to_string();
         }
     }
+
+    if possible_entity.len() > 0 {
+        // If buffer still full, dump its content
+        print!("{possible_entity}");
+        possible_entity = String::new();
+    }
 }
 
 fn load(full_url: &str) {
-    let response = request(&full_url).expect("Couldn't parse response...");
-    show(&response.data, false)
+    let url = parse_url(&full_url);
+
+    match url.scheme {
+        HttpScheme::HTTPS | HttpScheme::HTTP => {
+            let response = request(&url).expect("Couldn't parse response...");
+            show(&response.data, true)
+        }
+        HttpScheme::Data => {
+            // _ is the content_type
+            let (_, path_data) = url.path.split_once(',').unwrap_or((&url.path, ""));
+
+            // Writing end-of-file.
+            let data = String::new() + path_data + "\r\n";
+            show(&data, false)
+        }
+        HttpScheme::File => {
+            let data = fs::read_to_string(&url.path).expect("File not found...");
+            show(&data, false)
+        }
+    }
 }
 
 fn main() {
