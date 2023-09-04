@@ -319,6 +319,13 @@ fn show(source: &str, only_body: bool) {
                 if character == '&' && possible_entity.len() == 0 {
                     possible_entity += &character.to_string();
                 } else if possible_entity.len() > 0 {
+                    if possible_entity.len() > 25 {
+                        // No entity has an allowable name space large than 23 + 2, dump current buffer.
+                        print!("{possible_entity}");
+                        possible_entity = String::new();
+                        continue;
+                    }
+
                     possible_entity += &character.to_string();
 
                     if character == ';' {
