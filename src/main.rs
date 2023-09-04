@@ -287,23 +287,38 @@ fn request(full_url: &str) -> io::Result<HTTPResponse> {
     Ok(response)
 }
 
-fn show(source: &str) {
+fn show(source: &str, only_body: bool) {
     let mut in_angle = false;
+    let mut in_body = false;
+
+    let mut current_tag = String::new();
 
     for character in source.chars() {
         if character == '<' {
             in_angle = true
         } else if character == '>' {
+            // print!("{current_tag}");
+            if current_tag == "body" {
+                in_body = true
+            } else if current_tag == "/body" {
+                in_body = false
+            }
+            current_tag = String::new();
             in_angle = false
         } else if !in_angle {
+            if only_body && !in_body {
+                continue;
+            }
             print!("{character}")
+        } else if in_angle {
+            current_tag = current_tag + &character.to_string();
         }
     }
 }
 
 fn load(full_url: &str) {
     let response = request(&full_url).expect("Couldn't parse response...");
-    show(&response.data)
+    show(&response.data, true)
 }
 
 fn main() {
