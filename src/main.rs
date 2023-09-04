@@ -291,7 +291,10 @@ fn show(source: &str, only_body: bool) {
     let mut in_angle = false;
     let mut in_body = false;
 
+    let html_entities = HashMap::from([("&lt;", "<"), ("&gt;", ">")]);
+
     let mut current_tag = String::new();
+    let mut possible_entity = String::new();
 
     for character in source.chars() {
         if character == '<' {
@@ -307,18 +310,43 @@ fn show(source: &str, only_body: bool) {
             in_angle = false
         } else if !in_angle {
             if only_body && !in_body {
+                // way to show only inside the body element
                 continue;
             }
+
+            if character == '&' || possible_entity.len() > 0 {
+                // HTML entity interpretation
+                if character == '&' && possible_entity.len() == 0 {
+                    possible_entity += &character.to_string();
+                } else if possible_entity.len() > 0 {
+                    possible_entity += &character.to_string();
+
+                    if character == ';' {
+                        if html_entities.contains_key(&possible_entity.as_str()) {
+                            let string_value =
+                                html_entities.get(&possible_entity.as_str()).unwrap_or(&"");
+                            print!("{}", string_value)
+                        } else {
+                            print!("{possible_entity}")
+                        }
+
+                        possible_entity = String::new();
+                    }
+                }
+
+                continue;
+            }
+
             print!("{character}")
         } else if in_angle {
-            current_tag = current_tag + &character.to_string();
+            current_tag += &character.to_string();
         }
     }
 }
 
 fn load(full_url: &str) {
     let response = request(&full_url).expect("Couldn't parse response...");
-    show(&response.data, true)
+    show(&response.data, false)
 }
 
 fn main() {
