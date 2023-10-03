@@ -12,6 +12,8 @@ enum HttpScheme {
     File,
     HTTP,
     HTTPS,
+    ViewSourceHTTP,
+    ViewSourceHTTPS,
 }
 
 impl HttpScheme {
@@ -19,8 +21,10 @@ impl HttpScheme {
         match value {
             "data" => HttpScheme::Data,
             "file" => HttpScheme::File,
-            "http" => HttpScheme::HTTP,
             "https" => HttpScheme::HTTPS,
+            "http" => HttpScheme::HTTP,
+            "view-source:https" => HttpScheme::ViewSourceHTTPS,
+            "view-source:http" => HttpScheme::ViewSourceHTTP,
             _other => HttpScheme::HTTP,
         }
     }
@@ -93,31 +97,71 @@ struct HTTPResponse {
 }
 
 fn parse_url(full_url: &str) -> URL {
-    let scheme_regexp = Regex::new(r"^(http|https|file|data):/?/?").unwrap();
+    let scheme_regexp = Regex::new(r"^(http|https|file|data|view-source):/?/?").unwrap();
 
     let mut url_copy = String::from(full_url);
     let mut scheme = String::from("http");
 
     if scheme_regexp.is_match(&url_copy) {
-        let _schemes = ["http", "https", "file", "data"];
+        let _schemes = vec![
+            "http",
+            "https",
+            "file",
+            "data",
+            "view-source:http",
+            "view-source:https",
+        ];
 
-        let scheme_url: Vec<&str> = full_url.split(":").collect();
+        let mut scheme_url = Vec::new();
+        let mut scheme_found = false;
+        let mut prev = String::new();
 
-        assert!(_schemes.contains(&scheme_url[0]));
+        let spliter = ":";
 
-        scheme = String::from(scheme_url[0]);
+        for scheme_part in full_url.split(spliter) {
+            if prev.len() > 0 {
+                prev = prev + spliter + scheme_part;
+            } else {
+                prev += scheme_part
+            }
+            if scheme_found == false {
+                if _schemes.contains(&prev.as_str()) {
+                    scheme_url.push(prev);
+                    scheme_found = true;
+                    prev = "".to_string();
+                }
+            }
+        }
 
-        url_copy = String::from(scheme_url[1]);
+        scheme_url.push(prev);
 
-        if ["http", "https", "file"].contains(&scheme.as_str()) && url_copy.starts_with("//") {
+        assert!(scheme_found);
+        scheme = String::from(scheme_url[0].as_str());
+
+        url_copy = String::from(scheme_url[1].as_str());
+
+        if [
+            "http",
+            "https",
+            "file",
+            "view-source:http",
+            "view-source:https",
+        ]
+        .contains(&scheme.as_str())
+            && url_copy.starts_with("//")
+        {
             url_copy = String::from(url_copy.get(2..).unwrap_or(""))
         }
     }
 
-    if ["http", "https"].contains(&scheme.as_str()) {
+    if ["http", "https", "view-source:http", "view-source:https"].contains(&scheme.as_str()) {
         let (mut hostname, path) = url_copy.split_once('/').unwrap_or((&url_copy, ""));
 
-        let mut port = if scheme == "http" { "80" } else { "443" };
+        let mut port = if scheme.contains("https") {
+            "443"
+        } else {
+            "80"
+        };
 
         if hostname.contains(":") {
             let split_hostname_port: Vec<&str> = hostname.split(":").collect();
@@ -156,6 +200,15 @@ fn parse_url(full_url: &str) -> URL {
     }
 }
 
+fn transform(data: &str) -> String {
+    let lt_re = Regex::new(r"<").unwrap();
+    let gt_re = Regex::new(r">").unwrap();
+
+    let no_lt = String::from(lt_re.replace_all(data, "&lt;"));
+
+    String::from(gt_re.replace_all(&no_lt.as_str(), "&gt;"))
+}
+
 fn request(url: &URL) -> io::Result<HTTPResponse> {
     let headers: HashMap<String, String> = HashMap::from([
         (
@@ -184,7 +237,7 @@ fn request(url: &URL) -> io::Result<HTTPResponse> {
     let mut res = vec![];
 
     match url.scheme {
-        HttpScheme::HTTPS => {
+        HttpScheme::HTTPS | HttpScheme::ViewSourceHTTPS => {
             let base_stream = TcpStream::connect(format!("{}:{}", &url.hostname, &url.port))
                 .expect("Couldn't connect to the server...");
             let connector = SslConnector::builder(SslMethod::tls()).unwrap().build();
@@ -199,7 +252,7 @@ fn request(url: &URL) -> io::Result<HTTPResponse> {
 
             stream.read_to_end(&mut res).unwrap();
         }
-        HttpScheme::HTTP => {
+        HttpScheme::HTTP | HttpScheme::ViewSourceHTTP => {
             let mut stream = TcpStream::connect(format!("{}:{}", &url.hostname, &url.port))
                 .expect("Couldn't connect to the server...");
             stream
@@ -223,7 +276,10 @@ fn request(url: &URL) -> io::Result<HTTPResponse> {
     let mut status_message = String::from("");
 
     match url.scheme {
-        HttpScheme::HTTP | HttpScheme::HTTPS => {
+        HttpScheme::HTTP
+        | HttpScheme::HTTPS
+        | HttpScheme::ViewSourceHTTP
+        | HttpScheme::ViewSourceHTTPS => {
             let mut status_line: String = String::new();
             reader.read_line(&mut status_line)?;
 
@@ -285,7 +341,6 @@ fn show(source: &str, only_body: bool) {
         if character == '<' {
             in_angle = true
         } else if character == '>' {
-            // print!("{current_tag}");
             if current_tag == "body" {
                 in_body = true
             } else if current_tag == "/body" {
@@ -349,6 +404,11 @@ fn load(full_url: &str) {
         HttpScheme::HTTPS | HttpScheme::HTTP => {
             let response = request(&url).expect("Couldn't parse response...");
             show(&response.data, true)
+        }
+        HttpScheme::ViewSourceHTTPS | HttpScheme::ViewSourceHTTP => {
+            let response = request(&url).expect("Couldn't parse response...");
+
+            show(&transform(&response.data), false)
         }
         HttpScheme::Data => {
             // _ is the content_type
