@@ -1,3 +1,4 @@
+use flate2::read::GzDecoder;
 use openssl::ssl::{SslConnector, SslMethod};
 use regex::Regex;
 use std::collections::HashMap;
@@ -42,6 +43,8 @@ enum Header {
     Connection,
     UserAgent,
     Host,
+    AcceptEncoding,
+    ContentEncoding,
 }
 
 impl Header {
@@ -50,6 +53,8 @@ impl Header {
             Header::Connection => "Connection",
             Header::Host => "Host",
             Header::UserAgent => "User-Agent",
+            Header::AcceptEncoding => "Accept-Encoding",
+            Header::ContentEncoding => "Content-Encoding",
         }
     }
 }
@@ -223,6 +228,10 @@ fn request(url: &URL) -> io::Result<HTTPResponse> {
             String::from(Header::UserAgent.as_str()),
             String::from("Bored Browser"),
         ),
+        (
+            String::from(Header::AcceptEncoding.as_str()),
+            String::from("gzip"),
+        ),
     ]);
 
     let request = HTTPRequest {
@@ -303,16 +312,27 @@ fn request(url: &URL) -> io::Result<HTTPResponse> {
 
                 let (header, value) = current_line.split_once(":").unwrap_or((&current_line, ""));
 
-                headers.insert(String::from(header), String::from(value));
+                headers.insert(String::from(header), String::from(value.trim()));
             }
         }
         _ => (),
     }
 
-    let data: Vec<u8> = reader.fill_buf()?.to_vec();
-    reader.consume(data.len());
+    let data = reader.fill_buf()?;
+    let data_length = data.len();
 
-    let data_string = String::from_utf8(data).expect("Could not parse data as utf8...");
+    let mut data_string = String::new();
+
+    if headers.contains_key(Header::ContentEncoding.as_str()) {
+        println!("{:?}", headers);
+        assert!(headers.get(Header::ContentEncoding.as_str()) == Some(&String::from("gzip")));
+        let mut deflater = GzDecoder::new(data);
+        deflater.read_to_string(&mut data_string)?;
+    } else {
+        data_string = String::from_utf8(data.to_vec()).expect("Could not parse data as utf8...");
+    }
+
+    reader.consume(data_length);
 
     let response = HTTPResponse {
         status_code,
@@ -321,9 +341,6 @@ fn request(url: &URL) -> io::Result<HTTPResponse> {
         headers,
         data: data_string,
     };
-
-    assert_eq!(response.headers.get("transfer-encoding"), None);
-    assert_eq!(response.headers.get("content-encoding"), None);
 
     Ok(response)
 }
