@@ -3,6 +3,7 @@ use openssl::ssl::{SslConnector, SslMethod};
 use regex::Regex;
 use std::collections::HashMap;
 use std::env;
+use std::fmt;
 use std::fs;
 use std::io::{self, BufRead, Cursor, Read, Write};
 use std::net::TcpStream;
@@ -45,6 +46,7 @@ enum Header {
     Host,
     AcceptEncoding,
     ContentEncoding,
+    TransferEncoding,
 }
 
 impl Header {
@@ -55,6 +57,7 @@ impl Header {
             Header::UserAgent => "User-Agent",
             Header::AcceptEncoding => "Accept-Encoding",
             Header::ContentEncoding => "Content-Encoding",
+            Header::TransferEncoding => "Transfer-Encoding",
         }
     }
 }
@@ -99,6 +102,35 @@ struct HTTPResponse {
     status_message: String,
     headers: HashMap<String, String>,
     data: String,
+}
+
+impl HTTPResponse {
+    fn build_headers(&self) -> String {
+        let mut output = String::from("");
+
+        for (key, value) in &self.headers {
+            output.push_str(&key);
+            output.push_str(": ");
+            output.push_str(&value);
+            output.push_str("\r\n");
+        }
+
+        String::from(output)
+    }
+}
+
+impl fmt::Display for HTTPResponse {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "HTTP/{} {} {}\r\n{}\r\n{}\r\n",
+            self.http_version,
+            self.status_code,
+            self.status_message,
+            self.build_headers(),
+            self.data
+        )
+    }
 }
 
 fn parse_url(full_url: &str) -> URL {
@@ -245,6 +277,7 @@ fn request(url: &URL) -> io::Result<HTTPResponse> {
 
     let mut res = vec![];
 
+    // Make request
     match url.scheme {
         HttpScheme::HTTPS | HttpScheme::ViewSourceHTTPS => {
             let base_stream = TcpStream::connect(format!("{}:{}", &url.hostname, &url.port))
@@ -284,6 +317,7 @@ fn request(url: &URL) -> io::Result<HTTPResponse> {
     let mut http_version = String::from("");
     let mut status_message = String::from("");
 
+    // Extract HTTP information
     match url.scheme {
         HttpScheme::HTTP
         | HttpScheme::HTTPS
@@ -299,6 +333,11 @@ fn request(url: &URL) -> io::Result<HTTPResponse> {
             http_version = String::from(status_parts[0].trim_start_matches("HTTP/"));
 
             status_code = status_parts[1].parse::<u16>().unwrap();
+
+            if status_code >= 400 && status_code < 600 {
+                println!("Could not complete request. Dumping...");
+                println!("{}", request.build())
+            }
 
             status_message = String::from(status_parts[2]);
 
@@ -318,18 +357,60 @@ fn request(url: &URL) -> io::Result<HTTPResponse> {
         _ => (),
     }
 
-    let data = reader.fill_buf()?;
-    let data_length = data.len();
+    let mut data = vec![];
+    let mut data_length = 0;
+    // Transfer encoding (chunked)
+    if headers.contains_key(Header::TransferEncoding.as_str()) {
+        assert!(headers.get(Header::TransferEncoding.as_str()) == Some(&String::from("chunked")));
+
+        loop {
+            let mut length_buffer = String::new();
+            let bytes_read = reader
+                .read_line(&mut length_buffer)
+                .expect("reading line works");
+
+            if bytes_read == 0 {
+                break;
+            }
+
+            let bytes_to_read = u64::from_str_radix(length_buffer.trim_end(), 16).unwrap();
+
+            let mut data_buffer = vec![];
+
+            {
+                let reader_reference = reader.by_ref();
+
+                // read at most specified number of bytes
+                let data_bytes_read = reader_reference
+                    .take(bytes_to_read)
+                    .read_to_end(&mut data_buffer)?;
+
+                if bytes_read == 0 {
+                    break;
+                }
+
+                data_length += data_bytes_read;
+            } // drop our &mut reader_reference so we can use reader again
+
+            data.append(&mut data_buffer);
+
+            let mut spacing_buffer: [u8; 2] = [0; 2];
+
+            reader.read(&mut spacing_buffer)?;
+        }
+    } else {
+        data_length = reader.read_to_end(&mut data)?;
+    }
 
     let mut data_string = String::new();
 
+    // GZIP extraction if required
     if headers.contains_key(Header::ContentEncoding.as_str()) {
-        println!("{:?}", headers);
         assert!(headers.get(Header::ContentEncoding.as_str()) == Some(&String::from("gzip")));
-        let mut deflater = GzDecoder::new(data);
+        let mut deflater = GzDecoder::new(data.as_slice());
         deflater.read_to_string(&mut data_string)?;
     } else {
-        data_string = String::from_utf8(data.to_vec()).expect("Could not parse data as utf8...");
+        data_string = String::from_utf8(data).expect("Could not parse data as utf8...");
     }
 
     reader.consume(data_length);
@@ -445,7 +526,15 @@ fn load(full_url: &str) {
 fn main() {
     let args: Vec<String> = env::args().collect();
 
-    let full_url = &args[1];
+    let mut url = &String::new();
 
-    load(&full_url)
+    for argument in &args[1..] {
+        if !argument.starts_with("-") {
+            url = argument
+        }
+    }
+
+    if url.len() > 0 {
+        load(&url)
+    };
 }
