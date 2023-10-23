@@ -8,6 +8,11 @@ use std::fs;
 use std::io::{self, BufRead, Cursor, Read, Write};
 use std::net::TcpStream;
 
+pub struct Options {
+    debug: bool,
+    url: String,
+}
+
 #[derive(Debug)]
 enum HttpScheme {
     Data,
@@ -133,408 +138,432 @@ impl fmt::Display for HTTPResponse {
     }
 }
 
-fn parse_url(full_url: &str) -> URL {
-    let scheme_regexp = Regex::new(r"^(http|https|file|data|view-source):/?/?").unwrap();
+pub struct Browser {
+    options: Options,
+}
 
-    let mut url_copy = String::from(full_url);
-    let mut scheme = String::from("http");
+impl Browser {
+    pub fn new(options: Options) -> Self {
+        Self { options }
+    }
 
-    if scheme_regexp.is_match(&url_copy) {
-        let _schemes = vec![
-            "http",
-            "https",
-            "file",
-            "data",
-            "view-source:http",
-            "view-source:https",
-        ];
+    fn parse_url(&mut self) -> URL {
+        let scheme_regexp = Regex::new(r"^(http|https|file|data|view-source):/?/?").unwrap();
 
-        let mut scheme_url = Vec::new();
-        let mut scheme_found = false;
-        let mut prev = String::new();
+        let mut url_copy = String::from(self.options.url.clone());
+        let mut scheme = String::from("http");
 
-        let spliter = ":";
+        if scheme_regexp.is_match(&url_copy) {
+            let _schemes = vec![
+                "http",
+                "https",
+                "file",
+                "data",
+                "view-source:http",
+                "view-source:https",
+            ];
 
-        for scheme_part in full_url.split(spliter) {
-            if prev.len() > 0 {
-                prev = prev + spliter + scheme_part;
-            } else {
-                prev += scheme_part
-            }
-            if scheme_found == false {
-                if _schemes.contains(&prev.as_str()) {
-                    scheme_url.push(prev);
-                    scheme_found = true;
-                    prev = "".to_string();
+            let mut scheme_url = Vec::new();
+            let mut scheme_found = false;
+            let mut prev = String::new();
+
+            let spliter = ":";
+
+            for scheme_part in url_copy.split(spliter) {
+                if prev.len() > 0 {
+                    prev = prev + spliter + scheme_part;
+                } else {
+                    prev += scheme_part
                 }
+                if scheme_found == false {
+                    if _schemes.contains(&prev.as_str()) {
+                        scheme_url.push(prev);
+                        scheme_found = true;
+                        prev = "".to_string();
+                    }
+                }
+            }
+
+            scheme_url.push(prev);
+
+            assert!(scheme_found);
+            scheme = String::from(scheme_url[0].as_str());
+
+            url_copy = String::from(scheme_url[1].as_str());
+
+            if [
+                "http",
+                "https",
+                "file",
+                "view-source:http",
+                "view-source:https",
+            ]
+            .contains(&scheme.as_str())
+                && url_copy.starts_with("//")
+            {
+                url_copy = String::from(url_copy.get(2..).unwrap_or(""))
             }
         }
 
-        scheme_url.push(prev);
+        if ["http", "https", "view-source:http", "view-source:https"].contains(&scheme.as_str()) {
+            let (mut hostname, path) = url_copy.split_once('/').unwrap_or((&url_copy, ""));
 
-        assert!(scheme_found);
-        scheme = String::from(scheme_url[0].as_str());
+            let mut port = if scheme.contains("https") {
+                "443"
+            } else {
+                "80"
+            };
 
-        url_copy = String::from(scheme_url[1].as_str());
+            if hostname.contains(":") {
+                let split_hostname_port: Vec<&str> = hostname.split(":").collect();
 
-        if [
-            "http",
-            "https",
-            "file",
-            "view-source:http",
-            "view-source:https",
-        ]
-        .contains(&scheme.as_str())
-            && url_copy.starts_with("//")
-        {
-            url_copy = String::from(url_copy.get(2..).unwrap_or(""))
+                hostname = split_hostname_port[0];
+                port = split_hostname_port[1];
+            }
+
+            URL {
+                scheme: HttpScheme::from_str(&scheme),
+                hostname: String::from(hostname),
+                path: format!("/{}", path),
+                port: String::from(port),
+            }
+        } else if scheme == "file" {
+            URL {
+                scheme: HttpScheme::from_str(&scheme),
+                hostname: String::from(""),
+                path: String::from(url_copy),
+                port: String::from(""),
+            }
+        } else if scheme == "data" {
+            URL {
+                scheme: HttpScheme::from_str(&scheme),
+                hostname: String::from(""),
+                path: String::from(url_copy),
+                port: String::from(""),
+            }
+        } else {
+            URL {
+                scheme: HttpScheme::from_str(&scheme),
+                hostname: String::from(""),
+                path: String::from(url_copy),
+                port: String::from(""),
+            }
         }
     }
 
-    if ["http", "https", "view-source:http", "view-source:https"].contains(&scheme.as_str()) {
-        let (mut hostname, path) = url_copy.split_once('/').unwrap_or((&url_copy, ""));
+    fn transform(&mut self, data: &str) -> String {
+        let lt_re = Regex::new(r"<").unwrap();
+        let gt_re = Regex::new(r">").unwrap();
 
-        let mut port = if scheme.contains("https") {
-            "443"
-        } else {
-            "80"
+        let no_lt = String::from(lt_re.replace_all(data, "&lt;"));
+
+        String::from(gt_re.replace_all(&no_lt.as_str(), "&gt;"))
+    }
+
+    fn request(&mut self, url: &URL) -> io::Result<HTTPResponse> {
+        let headers: HashMap<String, String> = HashMap::from([
+            (
+                String::from(Header::Host.as_str()),
+                String::from(&url.hostname),
+            ),
+            (
+                String::from(Header::Connection.as_str()),
+                String::from("close"),
+            ),
+            (
+                String::from(Header::UserAgent.as_str()),
+                String::from("Bored Browser"),
+            ),
+            (
+                String::from(Header::AcceptEncoding.as_str()),
+                String::from("gzip"),
+            ),
+        ]);
+
+        let request = HTTPRequest {
+            data: String::from(""),
+            http_version: String::from("1.1"),
+            headers,
+            method: String::from("GET"),
+            path: String::from(&url.path),
+            port: String::from(&url.port),
         };
 
-        if hostname.contains(":") {
-            let split_hostname_port: Vec<&str> = hostname.split(":").collect();
+        let mut res = vec![];
 
-            hostname = split_hostname_port[0];
-            port = split_hostname_port[1];
-        }
+        // Make request
+        match url.scheme {
+            HttpScheme::HTTPS | HttpScheme::ViewSourceHTTPS => {
+                let base_stream = TcpStream::connect(format!("{}:{}", &url.hostname, &url.port))
+                    .expect("Couldn't connect to the server...");
+                let connector = SslConnector::builder(SslMethod::tls()).unwrap().build();
 
-        URL {
-            scheme: HttpScheme::from_str(&scheme),
-            hostname: String::from(hostname),
-            path: format!("/{}", path),
-            port: String::from(port),
-        }
-    } else if scheme == "file" {
-        URL {
-            scheme: HttpScheme::from_str(&scheme),
-            hostname: String::from(""),
-            path: String::from(url_copy),
-            port: String::from(""),
-        }
-    } else if scheme == "data" {
-        URL {
-            scheme: HttpScheme::from_str(&scheme),
-            hostname: String::from(""),
-            path: String::from(url_copy),
-            port: String::from(""),
-        }
-    } else {
-        URL {
-            scheme: HttpScheme::from_str(&scheme),
-            hostname: String::from(""),
-            path: String::from(url_copy),
-            port: String::from(""),
-        }
-    }
-}
+                let mut stream = connector.connect(&url.hostname, base_stream).unwrap();
 
-fn transform(data: &str) -> String {
-    let lt_re = Regex::new(r"<").unwrap();
-    let gt_re = Regex::new(r">").unwrap();
+                stream
+                    .write_all(request.build().as_bytes())
+                    .expect("Couldn't send data to server");
 
-    let no_lt = String::from(lt_re.replace_all(data, "&lt;"));
+                stream.flush()?;
 
-    String::from(gt_re.replace_all(&no_lt.as_str(), "&gt;"))
-}
-
-fn request(url: &URL) -> io::Result<HTTPResponse> {
-    let headers: HashMap<String, String> = HashMap::from([
-        (
-            String::from(Header::Host.as_str()),
-            String::from(&url.hostname),
-        ),
-        (
-            String::from(Header::Connection.as_str()),
-            String::from("close"),
-        ),
-        (
-            String::from(Header::UserAgent.as_str()),
-            String::from("Bored Browser"),
-        ),
-        (
-            String::from(Header::AcceptEncoding.as_str()),
-            String::from("gzip"),
-        ),
-    ]);
-
-    let request = HTTPRequest {
-        data: String::from(""),
-        http_version: String::from("1.1"),
-        headers,
-        method: String::from("GET"),
-        path: String::from(&url.path),
-        port: String::from(&url.port),
-    };
-
-    let mut res = vec![];
-
-    // Make request
-    match url.scheme {
-        HttpScheme::HTTPS | HttpScheme::ViewSourceHTTPS => {
-            let base_stream = TcpStream::connect(format!("{}:{}", &url.hostname, &url.port))
-                .expect("Couldn't connect to the server...");
-            let connector = SslConnector::builder(SslMethod::tls()).unwrap().build();
-
-            let mut stream = connector.connect(&url.hostname, base_stream).unwrap();
-
-            stream
-                .write_all(request.build().as_bytes())
-                .expect("Couldn't send data to server");
-
-            stream.flush()?;
-
-            stream.read_to_end(&mut res).unwrap();
-        }
-        HttpScheme::HTTP | HttpScheme::ViewSourceHTTP => {
-            let mut stream = TcpStream::connect(format!("{}:{}", &url.hostname, &url.port))
-                .expect("Couldn't connect to the server...");
-            stream
-                .write_all(request.build().as_bytes())
-                .expect("Couldn't send data to server");
-
-            stream.flush()?;
-
-            stream.read_to_end(&mut res).unwrap();
-        }
-        _ => {}
-    }
-
-    let mut res_stream = Cursor::new(res);
-
-    let mut reader = io::BufReader::new(&mut res_stream);
-
-    let mut headers = HashMap::new();
-    let mut status_code = 200;
-    let mut http_version = String::from("");
-    let mut status_message = String::from("");
-
-    // Extract HTTP information
-    match url.scheme {
-        HttpScheme::HTTP
-        | HttpScheme::HTTPS
-        | HttpScheme::ViewSourceHTTP
-        | HttpScheme::ViewSourceHTTPS => {
-            let mut status_line: String = String::new();
-            reader.read_line(&mut status_line)?;
-
-            let status_parts: Vec<&str> = status_line.split(" ").collect();
-
-            assert!(status_parts[0].contains("HTTP/"));
-
-            http_version = String::from(status_parts[0].trim_start_matches("HTTP/"));
-
-            status_code = status_parts[1].parse::<u16>().unwrap();
-
-            if status_code >= 400 && status_code < 600 {
-                println!("Could not complete request. Dumping...");
-                println!("{}", request.build())
+                stream.read_to_end(&mut res).unwrap();
             }
+            HttpScheme::HTTP | HttpScheme::ViewSourceHTTP => {
+                let mut stream = TcpStream::connect(format!("{}:{}", &url.hostname, &url.port))
+                    .expect("Couldn't connect to the server...");
+                stream
+                    .write_all(request.build().as_bytes())
+                    .expect("Couldn't send data to server");
 
-            status_message = String::from(status_parts[2]);
+                stream.flush()?;
 
-            loop {
-                let mut current_line: String = String::new();
-                reader.read_line(&mut current_line)?;
+                stream.read_to_end(&mut res).unwrap();
+            }
+            _ => {}
+        }
 
-                if current_line == String::from("\r\n") {
-                    break;
+        let mut res_stream = Cursor::new(res);
+
+        let mut reader = io::BufReader::new(&mut res_stream);
+
+        let mut headers = HashMap::new();
+        let mut status_code = 200;
+        let mut http_version = String::from("");
+        let mut status_message = String::from("");
+
+        // Extract HTTP information
+        match url.scheme {
+            HttpScheme::HTTP
+            | HttpScheme::HTTPS
+            | HttpScheme::ViewSourceHTTP
+            | HttpScheme::ViewSourceHTTPS => {
+                let mut status_line: String = String::new();
+                reader.read_line(&mut status_line)?;
+
+                let status_parts: Vec<&str> = status_line.split(" ").collect();
+
+                assert!(status_parts[0].contains("HTTP/"));
+
+                http_version = String::from(status_parts[0].trim_start_matches("HTTP/"));
+
+                status_code = status_parts[1].parse::<u16>().unwrap();
+
+                if status_code >= 400 && status_code < 600 {
+                    println!("Could not complete request. Dumping...");
+                    println!("{}", request.build())
                 }
 
-                let (header, value) = current_line.split_once(":").unwrap_or((&current_line, ""));
+                status_message = String::from(status_parts[2]);
 
-                headers.insert(String::from(header), String::from(value.trim()));
+                loop {
+                    let mut current_line: String = String::new();
+                    reader.read_line(&mut current_line)?;
+
+                    if current_line == String::from("\r\n") {
+                        break;
+                    }
+
+                    let (header, value) =
+                        current_line.split_once(":").unwrap_or((&current_line, ""));
+
+                    headers.insert(String::from(header), String::from(value.trim()));
+                }
             }
+            _ => (),
         }
-        _ => (),
-    }
 
-    let mut data = vec![];
-    let mut data_length = 0;
-    // Transfer encoding (chunked)
-    if headers.contains_key(Header::TransferEncoding.as_str()) {
-        assert!(headers.get(Header::TransferEncoding.as_str()) == Some(&String::from("chunked")));
+        let mut data = vec![];
+        let mut data_length = 0;
+        // Transfer encoding (chunked)
+        if headers.contains_key(Header::TransferEncoding.as_str()) {
+            assert!(
+                headers.get(Header::TransferEncoding.as_str()) == Some(&String::from("chunked"))
+            );
 
-        loop {
-            let mut length_buffer = String::new();
-            let bytes_read = reader
-                .read_line(&mut length_buffer)
-                .expect("reading line works");
-
-            if bytes_read == 0 {
-                break;
-            }
-
-            let bytes_to_read = u64::from_str_radix(length_buffer.trim_end(), 16).unwrap();
-
-            let mut data_buffer = vec![];
-
-            {
-                let reader_reference = reader.by_ref();
-
-                // read at most specified number of bytes
-                let data_bytes_read = reader_reference
-                    .take(bytes_to_read)
-                    .read_to_end(&mut data_buffer)?;
+            loop {
+                let mut length_buffer = String::new();
+                let bytes_read = reader
+                    .read_line(&mut length_buffer)
+                    .expect("reading line works");
 
                 if bytes_read == 0 {
                     break;
                 }
 
-                data_length += data_bytes_read;
-            } // drop our &mut reader_reference so we can use reader again
+                let bytes_to_read = u64::from_str_radix(length_buffer.trim_end(), 16).unwrap();
 
-            data.append(&mut data_buffer);
+                let mut data_buffer = vec![];
 
-            let mut spacing_buffer: [u8; 2] = [0; 2];
+                {
+                    let reader_reference = reader.by_ref();
 
-            reader.read(&mut spacing_buffer)?;
+                    // read at most specified number of bytes
+                    let data_bytes_read = reader_reference
+                        .take(bytes_to_read)
+                        .read_to_end(&mut data_buffer)?;
+
+                    if bytes_read == 0 {
+                        break;
+                    }
+
+                    data_length += data_bytes_read;
+                } // drop our &mut reader_reference so we can use reader again
+
+                data.append(&mut data_buffer);
+
+                let mut spacing_buffer: [u8; 2] = [0; 2];
+
+                reader.read(&mut spacing_buffer)?;
+            }
+        } else {
+            data_length = reader.read_to_end(&mut data)?;
         }
-    } else {
-        data_length = reader.read_to_end(&mut data)?;
+
+        let mut data_string = String::new();
+
+        // GZIP extraction if required
+        if headers.contains_key(Header::ContentEncoding.as_str()) {
+            assert!(headers.get(Header::ContentEncoding.as_str()) == Some(&String::from("gzip")));
+            let mut deflater = GzDecoder::new(data.as_slice());
+            deflater.read_to_string(&mut data_string)?;
+        } else {
+            data_string = String::from_utf8(data).expect("Could not parse data as utf8...");
+        }
+
+        reader.consume(data_length);
+
+        let response = HTTPResponse {
+            status_code,
+            http_version,
+            status_message,
+            headers,
+            data: data_string,
+        };
+
+        Ok(response)
     }
 
-    let mut data_string = String::new();
+    fn show(&mut self, source: &str, only_body: bool) {
+        let mut in_angle = false;
+        let mut in_body = false;
 
-    // GZIP extraction if required
-    if headers.contains_key(Header::ContentEncoding.as_str()) {
-        assert!(headers.get(Header::ContentEncoding.as_str()) == Some(&String::from("gzip")));
-        let mut deflater = GzDecoder::new(data.as_slice());
-        deflater.read_to_string(&mut data_string)?;
-    } else {
-        data_string = String::from_utf8(data).expect("Could not parse data as utf8...");
-    }
+        let html_entities = HashMap::from([("&lt;", "<"), ("&gt;", ">")]);
 
-    reader.consume(data_length);
+        let mut current_tag = String::new();
+        let mut possible_entity = String::new();
 
-    let response = HTTPResponse {
-        status_code,
-        http_version,
-        status_message,
-        headers,
-        data: data_string,
-    };
-
-    Ok(response)
-}
-
-fn show(source: &str, only_body: bool) {
-    let mut in_angle = false;
-    let mut in_body = false;
-
-    let html_entities = HashMap::from([("&lt;", "<"), ("&gt;", ">")]);
-
-    let mut current_tag = String::new();
-    let mut possible_entity = String::new();
-
-    for character in source.chars() {
-        if character == '<' {
-            in_angle = true
-        } else if character == '>' {
-            if current_tag == "body" {
-                in_body = true
-            } else if current_tag == "/body" {
-                in_body = false
-            }
-            current_tag = String::new();
-            in_angle = false
-        } else if !in_angle {
-            if only_body && !in_body {
-                // way to show only inside the body element
-                continue;
-            }
-
-            if character == '&' || possible_entity.len() > 0 {
-                // HTML entity interpretation
-                if character == '&' && possible_entity.len() == 0 {
-                    possible_entity += &character.to_string();
-                } else if possible_entity.len() > 0 {
-                    if possible_entity.len() > 25 {
-                        // No entity has an allowable name space large than 23 + 2, dump current buffer.
-                        print!("{possible_entity}");
-                        possible_entity = String::new();
-                        continue;
-                    }
-
-                    possible_entity += &character.to_string();
-
-                    if character == ';' {
-                        if html_entities.contains_key(&possible_entity.as_str()) {
-                            let string_value =
-                                html_entities.get(&possible_entity.as_str()).unwrap_or(&"");
-                            print!("{}", string_value)
-                        } else {
-                            print!("{possible_entity}")
-                        }
-
-                        possible_entity = String::new();
-                    }
+        for character in source.chars() {
+            if character == '<' {
+                in_angle = true
+            } else if character == '>' {
+                if current_tag == "body" {
+                    in_body = true
+                } else if current_tag == "/body" {
+                    in_body = false
+                }
+                current_tag = String::new();
+                in_angle = false
+            } else if !in_angle {
+                if only_body && !in_body {
+                    // way to show only inside the body element
+                    continue;
                 }
 
-                continue;
+                if character == '&' || possible_entity.len() > 0 {
+                    // HTML entity interpretation
+                    if character == '&' && possible_entity.len() == 0 {
+                        possible_entity += &character.to_string();
+                    } else if possible_entity.len() > 0 {
+                        if possible_entity.len() > 25 {
+                            // No entity has an allowable name space large than 23 + 2, dump current buffer.
+                            print!("{possible_entity}");
+                            possible_entity = String::new();
+                            continue;
+                        }
+
+                        possible_entity += &character.to_string();
+
+                        if character == ';' {
+                            if html_entities.contains_key(&possible_entity.as_str()) {
+                                let string_value =
+                                    html_entities.get(&possible_entity.as_str()).unwrap_or(&"");
+                                print!("{}", string_value)
+                            } else {
+                                print!("{possible_entity}")
+                            }
+
+                            possible_entity = String::new();
+                        }
+                    }
+
+                    continue;
+                }
+
+                print!("{character}")
+            } else if in_angle {
+                current_tag += &character.to_string();
             }
+        }
 
-            print!("{character}")
-        } else if in_angle {
-            current_tag += &character.to_string();
+        if possible_entity.len() > 0 {
+            // If buffer still full, dump its content
+            print!("{possible_entity}");
+            possible_entity = String::new();
         }
     }
 
-    if possible_entity.len() > 0 {
-        // If buffer still full, dump its content
-        print!("{possible_entity}");
-        possible_entity = String::new();
+    fn load(&mut self) {
+        let url = self.parse_url();
+
+        match url.scheme {
+            HttpScheme::HTTPS | HttpScheme::HTTP => {
+                let response = self.request(&url).expect("Couldn't parse response...");
+                self.show(&response.data, true)
+            }
+            HttpScheme::ViewSourceHTTPS | HttpScheme::ViewSourceHTTP => {
+                let response = self.request(&url).expect("Couldn't parse response...");
+
+                let transformed_response = self.transform(&response.data);
+
+                self.show(&transformed_response, false)
+            }
+            HttpScheme::Data => {
+                // _ is the content_type
+                let (_, path_data) = url.path.split_once(',').unwrap_or((&url.path, ""));
+
+                // Writing end-of-file.
+                let data = String::new() + path_data + "\r\n";
+                self.show(&data, false)
+            }
+            HttpScheme::File => {
+                let data = fs::read_to_string(&url.path).expect("File not found...");
+                self.show(&data, false)
+            }
+        }
     }
-}
 
-fn load(full_url: &str) {
-    let url = parse_url(&full_url);
-
-    match url.scheme {
-        HttpScheme::HTTPS | HttpScheme::HTTP => {
-            let response = request(&url).expect("Couldn't parse response...");
-            show(&response.data, true)
-        }
-        HttpScheme::ViewSourceHTTPS | HttpScheme::ViewSourceHTTP => {
-            let response = request(&url).expect("Couldn't parse response...");
-
-            show(&transform(&response.data), false)
-        }
-        HttpScheme::Data => {
-            // _ is the content_type
-            let (_, path_data) = url.path.split_once(',').unwrap_or((&url.path, ""));
-
-            // Writing end-of-file.
-            let data = String::new() + path_data + "\r\n";
-            show(&data, false)
-        }
-        HttpScheme::File => {
-            let data = fs::read_to_string(&url.path).expect("File not found...");
-            show(&data, false)
-        }
+    pub fn run(&mut self) {
+        self.load()
     }
 }
 
 fn main() {
     let args: Vec<String> = env::args().collect();
 
-    let mut url = &String::new();
+    let mut options = Options {
+        debug: false,
+        url: String::new(),
+    };
 
     for argument in &args[1..] {
-        if !argument.starts_with("-") {
-            url = argument
+        if argument == "--debug" {
+            options.debug = true;
+        } else if options.url.len() == 0 && !argument.starts_with('-') {
+            options.url = String::from(argument);
+        } else {
+            panic!("Unknown argument {argument}")
         }
     }
 
-    if url.len() > 0 {
-        load(&url)
-    };
+    Browser::new(options).run();
 }
