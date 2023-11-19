@@ -139,7 +139,7 @@ impl URL {
 }
 
 #[cfg(test)]
-mod tests {
+mod data_scheme_tests {
     use super::URIScheme;
     use super::URL;
 
@@ -153,6 +153,12 @@ mod tests {
         assert_eq!(parse_url.port, "");
         assert_eq!(parse_url.scheme, URIScheme::Data);
     }
+}
+
+#[cfg(test)]
+mod file_scheme_tests {
+    use super::URIScheme;
+    use super::URL;
 
     #[test]
     fn parses_file_absolute_scheme() {
@@ -175,6 +181,12 @@ mod tests {
         assert_eq!(parse_url.port, "");
         assert_eq!(parse_url.scheme, URIScheme::File);
     }
+}
+
+#[cfg(test)]
+mod http_scheme_tests {
+    use super::URIScheme;
+    use super::URL;
 
     #[test]
     fn parses_http_scheme() {
@@ -208,6 +220,13 @@ mod tests {
         assert_eq!(parse_url.port, "9090");
         assert_eq!(parse_url.scheme, URIScheme::HTTP);
     }
+}
+
+#[cfg(test)]
+mod https_scheme_tests {
+    use super::URIScheme;
+    use super::URL;
+
     #[test]
     fn parses_https_scheme() {
         let url: String = String::from("https://www.example.org");
@@ -240,6 +259,12 @@ mod tests {
         assert_eq!(parse_url.port, "9090");
         assert_eq!(parse_url.scheme, URIScheme::HTTPS);
     }
+}
+
+#[cfg(test)]
+mod view_source_http_scheme_tests {
+    use super::URIScheme;
+    use super::URL;
 
     #[test]
     fn parses_http_view_source_scheme() {
@@ -273,6 +298,13 @@ mod tests {
         assert_eq!(parse_url.port, "9090");
         assert_eq!(parse_url.scheme, URIScheme::ViewSourceHTTP);
     }
+}
+
+#[cfg(test)]
+mod view_source_https_scheme_tests {
+    use super::URIScheme;
+    use super::URL;
+
     #[test]
     fn parses_https_view_source_scheme() {
         let url: String = String::from("view-source:https://www.example.org");
