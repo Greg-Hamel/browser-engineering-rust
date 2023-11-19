@@ -137,3 +137,107 @@ impl URL {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::URIScheme;
+    use super::URL;
+
+    #[test]
+    fn parses_data_scheme() {
+        let url: String = String::from("data:text/html,Hellow world!");
+        let parse_url = URL::parse(&url);
+
+        assert_eq!(parse_url.hostname, "");
+        assert_eq!(parse_url.path, "text/html,Hellow world!");
+        assert_eq!(parse_url.port, "");
+        assert_eq!(parse_url.scheme, URIScheme::Data);
+    }
+
+    #[test]
+    fn parses_file_absolute_scheme() {
+        let url: String = String::from("file:///Users/test/main.rs");
+        let parse_url = URL::parse(&url);
+
+        assert_eq!(parse_url.hostname, "");
+        assert_eq!(parse_url.path, "/Users/test/main.rs");
+        assert_eq!(parse_url.port, "");
+        assert_eq!(parse_url.scheme, URIScheme::File);
+    }
+
+    #[test]
+    fn parses_file_relative_scheme() {
+        let url: String = String::from("file://main.rs");
+        let parse_url = URL::parse(&url);
+
+        assert_eq!(parse_url.hostname, "");
+        assert_eq!(parse_url.path, "main.rs");
+        assert_eq!(parse_url.port, "");
+        assert_eq!(parse_url.scheme, URIScheme::File);
+    }
+
+    #[test]
+    fn parses_http_scheme() {
+        let url: String = String::from("http://www.example.org");
+        let parse_url = URL::parse(&url);
+
+        assert_eq!(parse_url.hostname, "www.example.org");
+        assert_eq!(parse_url.path, "/");
+        assert_eq!(parse_url.port, "80");
+        assert_eq!(parse_url.scheme, URIScheme::HTTP);
+    }
+
+    #[test]
+    fn parses_http_scheme_with_path() {
+        let url: String = String::from("http://www.example.org/one");
+        let parse_url = URL::parse(&url);
+
+        assert_eq!(parse_url.hostname, "www.example.org");
+        assert_eq!(parse_url.path, "/one");
+        assert_eq!(parse_url.port, "80");
+        assert_eq!(parse_url.scheme, URIScheme::HTTP);
+    }
+
+    #[test]
+    fn parses_http_scheme_with_port() {
+        let url: String = String::from("http://www.example.org:9090");
+        let parse_url = URL::parse(&url);
+
+        assert_eq!(parse_url.hostname, "www.example.org");
+        assert_eq!(parse_url.path, "/");
+        assert_eq!(parse_url.port, "9090");
+        assert_eq!(parse_url.scheme, URIScheme::HTTP);
+    }
+    #[test]
+    fn parses_https_scheme() {
+        let url: String = String::from("https://www.example.org");
+        let parse_url = URL::parse(&url);
+
+        assert_eq!(parse_url.hostname, "www.example.org");
+        assert_eq!(parse_url.path, "/");
+        assert_eq!(parse_url.port, "443");
+        assert_eq!(parse_url.scheme, URIScheme::HTTPS);
+    }
+
+    #[test]
+    fn parses_https_scheme_with_path() {
+        let url: String = String::from("https://www.example.org/one");
+        let parse_url = URL::parse(&url);
+
+        assert_eq!(parse_url.hostname, "www.example.org");
+        assert_eq!(parse_url.path, "/one");
+        assert_eq!(parse_url.port, "443");
+        assert_eq!(parse_url.scheme, URIScheme::HTTPS);
+    }
+
+    #[test]
+    fn parses_https_scheme_with_port() {
+        let url: String = String::from("https://www.example.org:9090");
+        let parse_url = URL::parse(&url);
+
+        assert_eq!(parse_url.hostname, "www.example.org");
+        assert_eq!(parse_url.path, "/");
+        assert_eq!(parse_url.port, "9090");
+        assert_eq!(parse_url.scheme, URIScheme::HTTPS);
+    }
+}
