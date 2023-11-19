@@ -240,4 +240,69 @@ mod tests {
         assert_eq!(parse_url.port, "9090");
         assert_eq!(parse_url.scheme, URIScheme::HTTPS);
     }
+
+    #[test]
+    fn parses_http_view_source_scheme() {
+        let url: String = String::from("view-source:http://www.example.org");
+        let parse_url = URL::parse(&url);
+
+        assert_eq!(parse_url.hostname, "www.example.org");
+        assert_eq!(parse_url.path, "/");
+        assert_eq!(parse_url.port, "80");
+        assert_eq!(parse_url.scheme, URIScheme::ViewSourceHTTP);
+    }
+
+    #[test]
+    fn parses_http_view_source_scheme_with_path() {
+        let url: String = String::from("view-source:http://www.example.org/one");
+        let parse_url = URL::parse(&url);
+
+        assert_eq!(parse_url.hostname, "www.example.org");
+        assert_eq!(parse_url.path, "/one");
+        assert_eq!(parse_url.port, "80");
+        assert_eq!(parse_url.scheme, URIScheme::ViewSourceHTTP);
+    }
+
+    #[test]
+    fn parses_http_view_source_scheme_with_port() {
+        let url: String = String::from("view-source:http://www.example.org:9090");
+        let parse_url = URL::parse(&url);
+
+        assert_eq!(parse_url.hostname, "www.example.org");
+        assert_eq!(parse_url.path, "/");
+        assert_eq!(parse_url.port, "9090");
+        assert_eq!(parse_url.scheme, URIScheme::ViewSourceHTTP);
+    }
+    #[test]
+    fn parses_https_view_source_scheme() {
+        let url: String = String::from("view-source:https://www.example.org");
+        let parse_url = URL::parse(&url);
+
+        assert_eq!(parse_url.hostname, "www.example.org");
+        assert_eq!(parse_url.path, "/");
+        assert_eq!(parse_url.port, "443");
+        assert_eq!(parse_url.scheme, URIScheme::ViewSourceHTTPS);
+    }
+
+    #[test]
+    fn parses_https_view_source_scheme_with_path() {
+        let url: String = String::from("view-source:https://www.example.org/one");
+        let parse_url = URL::parse(&url);
+
+        assert_eq!(parse_url.hostname, "www.example.org");
+        assert_eq!(parse_url.path, "/one");
+        assert_eq!(parse_url.port, "443");
+        assert_eq!(parse_url.scheme, URIScheme::ViewSourceHTTPS);
+    }
+
+    #[test]
+    fn parses_https_view_source_scheme_with_port() {
+        let url: String = String::from("view-source:https://www.example.org:9090");
+        let parse_url = URL::parse(&url);
+
+        assert_eq!(parse_url.hostname, "www.example.org");
+        assert_eq!(parse_url.path, "/");
+        assert_eq!(parse_url.port, "9090");
+        assert_eq!(parse_url.scheme, URIScheme::ViewSourceHTTPS);
+    }
 }
