@@ -1,7 +1,5 @@
-mod url;
-
-use url::URIScheme;
-use url::URL;
+use crate::url::URIScheme;
+use crate::url::URL;
 
 use flate2::read::GzDecoder;
 use openssl::ssl::{SslConnector, SslMethod};
@@ -13,33 +11,11 @@ use std::fs;
 use std::io::{self, BufRead, Cursor, Read, Write};
 use std::net::TcpStream;
 
+pub mod url;
+
 struct Options {
     debug: bool,
     url: String,
-}
-
-#[derive(Debug)]
-enum HttpScheme {
-    Data,
-    File,
-    HTTP,
-    HTTPS,
-    ViewSourceHTTP,
-    ViewSourceHTTPS,
-}
-
-impl HttpScheme {
-    fn from_str(value: &str) -> HttpScheme {
-        match value {
-            "data" => HttpScheme::Data,
-            "file" => HttpScheme::File,
-            "https" => HttpScheme::HTTPS,
-            "http" => HttpScheme::HTTP,
-            "view-source:https" => HttpScheme::ViewSourceHTTPS,
-            "view-source:http" => HttpScheme::ViewSourceHTTP,
-            _other => HttpScheme::HTTP,
-        }
-    }
 }
 
 enum Header {

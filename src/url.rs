@@ -1,7 +1,7 @@
 use regex::Regex;
 
-#[derive(Debug)]
-pub(crate) enum URIScheme {
+#[derive(Debug, PartialEq)]
+pub enum URIScheme {
     Data,
     File,
     HTTP,
@@ -25,7 +25,7 @@ impl URIScheme {
 }
 
 #[derive(Debug)]
-pub(crate) struct URL {
+pub struct URL {
     pub scheme: URIScheme,
     pub hostname: String,
     pub path: String,
