@@ -1,3 +1,8 @@
+mod url;
+
+use url::URIScheme;
+use url::URL;
+
 use flate2::read::GzDecoder;
 use openssl::ssl::{SslConnector, SslMethod};
 use regex::Regex;
@@ -8,7 +13,7 @@ use std::fs;
 use std::io::{self, BufRead, Cursor, Read, Write};
 use std::net::TcpStream;
 
-pub struct Options {
+struct Options {
     debug: bool,
     url: String,
 }
@@ -35,14 +40,6 @@ impl HttpScheme {
             _other => HttpScheme::HTTP,
         }
     }
-}
-
-#[derive(Debug)]
-struct URL {
-    scheme: HttpScheme,
-    hostname: String,
-    path: String,
-    port: String,
 }
 
 enum Header {
@@ -138,117 +135,13 @@ impl fmt::Display for HTTPResponse {
     }
 }
 
-pub struct Browser {
+struct Browser {
     options: Options,
 }
 
 impl Browser {
     pub fn new(options: Options) -> Self {
         Self { options }
-    }
-
-    fn parse_url(&mut self) -> URL {
-        let scheme_regexp = Regex::new(r"^(http|https|file|data|view-source):/?/?").unwrap();
-
-        let mut url_copy = String::from(self.options.url.clone());
-        let mut scheme = String::from("http");
-
-        if scheme_regexp.is_match(&url_copy) {
-            let _schemes = vec![
-                "http",
-                "https",
-                "file",
-                "data",
-                "view-source:http",
-                "view-source:https",
-            ];
-
-            let mut scheme_url = Vec::new();
-            let mut scheme_found = false;
-            let mut prev = String::new();
-
-            let spliter = ":";
-
-            for scheme_part in url_copy.split(spliter) {
-                if prev.len() > 0 {
-                    prev = prev + spliter + scheme_part;
-                } else {
-                    prev += scheme_part
-                }
-                if scheme_found == false {
-                    if _schemes.contains(&prev.as_str()) {
-                        scheme_url.push(prev);
-                        scheme_found = true;
-                        prev = "".to_string();
-                    }
-                }
-            }
-
-            scheme_url.push(prev);
-
-            assert!(scheme_found);
-            scheme = String::from(scheme_url[0].as_str());
-
-            url_copy = String::from(scheme_url[1].as_str());
-
-            if [
-                "http",
-                "https",
-                "file",
-                "view-source:http",
-                "view-source:https",
-            ]
-            .contains(&scheme.as_str())
-                && url_copy.starts_with("//")
-            {
-                url_copy = String::from(url_copy.get(2..).unwrap_or(""))
-            }
-        }
-
-        if ["http", "https", "view-source:http", "view-source:https"].contains(&scheme.as_str()) {
-            let (mut hostname, path) = url_copy.split_once('/').unwrap_or((&url_copy, ""));
-
-            let mut port = if scheme.contains("https") {
-                "443"
-            } else {
-                "80"
-            };
-
-            if hostname.contains(":") {
-                let split_hostname_port: Vec<&str> = hostname.split(":").collect();
-
-                hostname = split_hostname_port[0];
-                port = split_hostname_port[1];
-            }
-
-            URL {
-                scheme: HttpScheme::from_str(&scheme),
-                hostname: String::from(hostname),
-                path: format!("/{}", path),
-                port: String::from(port),
-            }
-        } else if scheme == "file" {
-            URL {
-                scheme: HttpScheme::from_str(&scheme),
-                hostname: String::from(""),
-                path: String::from(url_copy),
-                port: String::from(""),
-            }
-        } else if scheme == "data" {
-            URL {
-                scheme: HttpScheme::from_str(&scheme),
-                hostname: String::from(""),
-                path: String::from(url_copy),
-                port: String::from(""),
-            }
-        } else {
-            URL {
-                scheme: HttpScheme::from_str(&scheme),
-                hostname: String::from(""),
-                path: String::from(url_copy),
-                port: String::from(""),
-            }
-        }
     }
 
     fn transform(&mut self, data: &str) -> String {
@@ -293,7 +186,7 @@ impl Browser {
 
         // Make request
         match url.scheme {
-            HttpScheme::HTTPS | HttpScheme::ViewSourceHTTPS => {
+            URIScheme::HTTPS | URIScheme::ViewSourceHTTPS => {
                 let base_stream = TcpStream::connect(format!("{}:{}", &url.hostname, &url.port))
                     .expect("Couldn't connect to the server...");
                 let connector = SslConnector::builder(SslMethod::tls()).unwrap().build();
@@ -308,7 +201,7 @@ impl Browser {
 
                 stream.read_to_end(&mut res).unwrap();
             }
-            HttpScheme::HTTP | HttpScheme::ViewSourceHTTP => {
+            URIScheme::HTTP | URIScheme::ViewSourceHTTP => {
                 let mut stream = TcpStream::connect(format!("{}:{}", &url.hostname, &url.port))
                     .expect("Couldn't connect to the server...");
                 stream
@@ -333,10 +226,10 @@ impl Browser {
 
         // Extract HTTP information
         match url.scheme {
-            HttpScheme::HTTP
-            | HttpScheme::HTTPS
-            | HttpScheme::ViewSourceHTTP
-            | HttpScheme::ViewSourceHTTPS => {
+            URIScheme::HTTP
+            | URIScheme::HTTPS
+            | URIScheme::ViewSourceHTTP
+            | URIScheme::ViewSourceHTTPS => {
                 let mut status_line: String = String::new();
                 reader.read_line(&mut status_line)?;
 
@@ -513,21 +406,21 @@ impl Browser {
     }
 
     fn load(&mut self) {
-        let url = self.parse_url();
+        let url = URL::parse(&self.options.url);
 
         match url.scheme {
-            HttpScheme::HTTPS | HttpScheme::HTTP => {
+            URIScheme::HTTPS | URIScheme::HTTP => {
                 let response = self.request(&url).expect("Couldn't parse response...");
                 self.show(&response.data, true)
             }
-            HttpScheme::ViewSourceHTTPS | HttpScheme::ViewSourceHTTP => {
+            URIScheme::ViewSourceHTTPS | URIScheme::ViewSourceHTTP => {
                 let response = self.request(&url).expect("Couldn't parse response...");
 
                 let transformed_response = self.transform(&response.data);
 
                 self.show(&transformed_response, false)
             }
-            HttpScheme::Data => {
+            URIScheme::Data => {
                 // _ is the content_type
                 let (_, path_data) = url.path.split_once(',').unwrap_or((&url.path, ""));
 
@@ -535,7 +428,7 @@ impl Browser {
                 let data = String::new() + path_data + "\r\n";
                 self.show(&data, false)
             }
-            HttpScheme::File => {
+            URIScheme::File => {
                 let data = fs::read_to_string(&url.path).expect("File not found...");
                 self.show(&data, false)
             }
