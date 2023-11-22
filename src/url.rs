@@ -1,6 +1,6 @@
 use regex::Regex;
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum URIScheme {
     Data,
     File,
@@ -24,7 +24,7 @@ impl URIScheme {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct URL {
     pub scheme: URIScheme,
     pub hostname: String,

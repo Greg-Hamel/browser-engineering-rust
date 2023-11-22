@@ -57,6 +57,7 @@ impl HTTPMethod {
 }
 
 pub struct HTTPRequest {
+    pub url: URL,
     pub http_version: String,
     pub method: HTTPMethod,
     pub path: String,
@@ -130,8 +131,8 @@ impl fmt::Display for HTTPResponse {
 pub struct Request {}
 
 impl Request {
-    pub fn send(url: &URL) -> io::Result<HTTPResponse> {
-        let headers: HashMap<String, String> = HashMap::from([
+    fn build_default_headers(url: &URL) -> HashMap<String, String> {
+        let output = HashMap::from([
             (
                 String::from(Header::Host.as_str()),
                 String::from(&url.hostname),
@@ -150,25 +151,23 @@ impl Request {
             ),
         ]);
 
-        let request = HTTPRequest {
-            data: String::from(""),
-            http_version: String::from("1.1"),
-            headers,
-            method: HTTPMethod::GET,
-            path: String::from(&url.path),
-            port: String::from(&url.port),
-        };
+        output
+    }
 
+    fn make_request(request: &HTTPRequest) -> io::Result<Vec<u8>> {
         let mut res = vec![];
 
         // Make request
-        match url.scheme {
+        match request.url.scheme {
             URIScheme::HTTPS | URIScheme::ViewSourceHTTPS => {
-                let base_stream = TcpStream::connect(format!("{}:{}", &url.hostname, &url.port))
-                    .expect("Couldn't connect to the server...");
+                let base_stream =
+                    TcpStream::connect(format!("{}:{}", &request.url.hostname, &request.url.port))
+                        .expect("Couldn't connect to the server...");
                 let connector = SslConnector::builder(SslMethod::tls()).unwrap().build();
 
-                let mut stream = connector.connect(&url.hostname, base_stream).unwrap();
+                let mut stream = connector
+                    .connect(&request.url.hostname, base_stream)
+                    .unwrap();
 
                 stream
                     .write_all(request.build().as_bytes())
@@ -179,8 +178,9 @@ impl Request {
                 stream.read_to_end(&mut res).unwrap();
             }
             URIScheme::HTTP | URIScheme::ViewSourceHTTP => {
-                let mut stream = TcpStream::connect(format!("{}:{}", &url.hostname, &url.port))
-                    .expect("Couldn't connect to the server...");
+                let mut stream =
+                    TcpStream::connect(format!("{}:{}", &request.url.hostname, &request.url.port))
+                        .expect("Couldn't connect to the server...");
                 stream
                     .write_all(request.build().as_bytes())
                     .expect("Couldn't send data to server");
@@ -191,6 +191,22 @@ impl Request {
             }
             _ => {}
         }
+
+        Ok(res)
+    }
+
+    pub fn send(url: &URL) -> io::Result<HTTPResponse> {
+        let request = HTTPRequest {
+            url: url.clone(),
+            data: String::from(""),
+            http_version: String::from("1.1"),
+            headers: Self::build_default_headers(&url),
+            method: HTTPMethod::GET,
+            path: String::from(&url.path),
+            port: String::from(&url.port),
+        };
+
+        let res = Self::make_request(&request)?;
 
         let mut res_stream = Cursor::new(res);
 
