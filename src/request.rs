@@ -30,9 +30,35 @@ impl Header {
     }
 }
 
+pub enum HTTPMethod {
+    GET,
+    HEAD,
+    POST,
+    PUT,
+    DELETE,
+    CONNECT,
+    OPTIONS,
+    TRACE,
+}
+
+impl HTTPMethod {
+    fn as_str(&self) -> &'static str {
+        match self {
+            HTTPMethod::GET => "GET",
+            HTTPMethod::HEAD => "HEAD",
+            HTTPMethod::POST => "POST",
+            HTTPMethod::PUT => "PUT",
+            HTTPMethod::DELETE => "DELETE",
+            HTTPMethod::CONNECT => "CONNECT",
+            HTTPMethod::OPTIONS => "OPTIONS",
+            HTTPMethod::TRACE => "TRACE",
+        }
+    }
+}
+
 pub struct HTTPRequest {
     pub http_version: String,
-    pub method: String,
+    pub method: HTTPMethod,
     pub path: String,
     pub port: String,
     pub headers: HashMap<String, String>,
@@ -43,7 +69,7 @@ impl HTTPRequest {
     fn build(&self) -> String {
         format!(
             "{} {} HTTP/{}\r\n{}\r\n\r\n",
-            self.method,
+            self.method.as_str(),
             self.path,
             self.http_version,
             self.build_headers()
@@ -128,7 +154,7 @@ impl Request {
             data: String::from(""),
             http_version: String::from("1.1"),
             headers,
-            method: String::from("GET"),
+            method: HTTPMethod::GET,
             path: String::from(&url.path),
             port: String::from(&url.port),
         };
