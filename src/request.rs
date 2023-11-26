@@ -63,8 +63,6 @@ pub struct HTTPRequest {
     pub url: URI,
     pub http_version: String,
     pub method: HTTPMethod,
-    pub path: String,
-    pub port: String,
     pub headers: HashMap<String, String>,
     pub data: String,
 }
@@ -74,7 +72,7 @@ impl HTTPRequest {
         format!(
             "{} {} HTTP/{}\r\n{}\r\n\r\n",
             self.method.as_str(),
-            self.path,
+            self.url.path,
             self.http_version,
             self.build_headers()
         )
@@ -319,14 +317,12 @@ impl Request {
             // Absolute
             println!("{location_header}");
             let new_url = URI::parse(&location_header);
-            new_request.url = new_url.clone();
-            new_request.path = new_url.path;
+            new_request.url = new_url;
         } else {
             // Relative path
             if new_request.url.path.is_empty() {
                 let new_path = format!("{}", location_header);
-                new_request.url.path = new_path.clone();
-                new_request.path = new_path;
+                new_request.url.path = new_path;
             } else {
                 let last_slash_index = new_request.url.path.rfind('/').expect("No slash");
 
@@ -334,8 +330,7 @@ impl Request {
                     new_request.url.path.split_at(last_slash_index).0;
 
                 let new_path = format!("{path_without_last_relative_portion}{location_header}");
-                new_request.url.path = new_path.clone();
-                new_request.path = new_path;
+                new_request.url.path = new_path;
             }
         }
 
@@ -349,8 +344,6 @@ impl Request {
             http_version: String::from("1.1"),
             headers: Self::build_default_headers(&url),
             method: HTTPMethod::GET,
-            path: String::from(&url.path),
-            port: String::from(&url.port),
         };
 
         let mut redirect_count = 0;
@@ -398,8 +391,6 @@ mod redirect_response_to_request {
             url: URI::parse(&String::from("http://www.example.org/this_is_a_redirect")),
             http_version: String::from("1.1"),
             method: super::HTTPMethod::GET,
-            path: String::from(""),
-            port: String::from(""),
             headers: HashMap::new(),
             data: String::from(""),
         };
@@ -423,7 +414,6 @@ mod redirect_response_to_request {
 
         assert_eq!(redirect_url.hostname, new_request.url.hostname);
         assert_eq!(redirect_url.path, new_request.url.path);
-        assert_eq!(redirect_url.path, new_request.path);
         assert_eq!(redirect_url.port, new_request.url.port);
         assert_eq!(redirect_url.scheme, new_request.url.scheme);
     }
@@ -434,8 +424,6 @@ mod redirect_response_to_request {
             url: URI::parse(&String::from("http://www.example.org/this_is_a_redirect")),
             http_version: String::from("1.1"),
             method: super::HTTPMethod::GET,
-            path: String::from(""),
-            port: String::from(""),
             headers: HashMap::new(),
             data: String::from(""),
         };
@@ -459,7 +447,6 @@ mod redirect_response_to_request {
 
         assert_eq!(redirect_url.hostname, new_request.url.hostname);
         assert_eq!(redirect_url.path, new_request.url.path);
-        assert_eq!(redirect_url.path, new_request.path);
         assert_eq!(redirect_url.port, new_request.url.port);
         assert_eq!(redirect_url.scheme, new_request.url.scheme);
     }
@@ -472,8 +459,6 @@ mod redirect_response_to_request {
             )),
             http_version: String::from("1.1"),
             method: super::HTTPMethod::GET,
-            path: String::from(""),
-            port: String::from(""),
             headers: HashMap::new(),
             data: String::from(""),
         };
@@ -497,7 +482,6 @@ mod redirect_response_to_request {
 
         assert_eq!(redirect_url.hostname, new_request.url.hostname);
         assert_eq!(redirect_url.path, new_request.url.path);
-        assert_eq!(redirect_url.path, new_request.path);
         assert_eq!(redirect_url.port, new_request.url.port);
         assert_eq!(redirect_url.scheme, new_request.url.scheme);
     }
