@@ -1,6 +1,6 @@
 use crate::request::Request;
 use crate::url::URIScheme;
-use crate::url::URL;
+use crate::url::URI;
 
 use regex::Regex;
 use std::collections::HashMap;
@@ -104,7 +104,7 @@ impl Browser {
     }
 
     fn load(&mut self) {
-        let url = URL::parse(&self.options.url);
+        let url = URI::parse(&self.options.url);
 
         match url.scheme {
             URIScheme::HTTPS | URIScheme::HTTP => {

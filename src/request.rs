@@ -1,5 +1,5 @@
 use crate::url::URIScheme;
-use crate::url::URL;
+use crate::url::URI;
 
 use flate2::read::GzDecoder;
 use openssl::ssl::{SslConnector, SslMethod};
@@ -9,55 +9,58 @@ use std::io::{self, BufRead, Cursor, Read, Write};
 use std::net::TcpStream;
 
 pub enum Header {
-    Connection,
-    UserAgent,
-    Host,
     AcceptEncoding,
+    Connection,
     ContentEncoding,
+    Host,
+    Location,
     TransferEncoding,
+    UserAgent,
 }
 
 impl Header {
     fn as_str(&self) -> &'static str {
         match self {
-            Header::Connection => "Connection",
-            Header::Host => "Host",
-            Header::UserAgent => "User-Agent",
             Header::AcceptEncoding => "Accept-Encoding",
+            Header::Connection => "Connection",
             Header::ContentEncoding => "Content-Encoding",
+            Header::Host => "Host",
+            Header::Location => "Location",
             Header::TransferEncoding => "Transfer-Encoding",
+            Header::UserAgent => "User-Agent",
         }
     }
 }
 
+#[derive(Clone, Debug)]
 pub enum HTTPMethod {
+    CONNECT,
+    DELETE,
     GET,
     HEAD,
+    OPTIONS,
     POST,
     PUT,
-    DELETE,
-    CONNECT,
-    OPTIONS,
     TRACE,
 }
 
 impl HTTPMethod {
     fn as_str(&self) -> &'static str {
         match self {
+            HTTPMethod::CONNECT => "CONNECT",
+            HTTPMethod::DELETE => "DELETE",
             HTTPMethod::GET => "GET",
             HTTPMethod::HEAD => "HEAD",
+            HTTPMethod::OPTIONS => "OPTIONS",
             HTTPMethod::POST => "POST",
             HTTPMethod::PUT => "PUT",
-            HTTPMethod::DELETE => "DELETE",
-            HTTPMethod::CONNECT => "CONNECT",
-            HTTPMethod::OPTIONS => "OPTIONS",
             HTTPMethod::TRACE => "TRACE",
         }
     }
 }
-
+#[derive(Clone, Debug)]
 pub struct HTTPRequest {
-    pub url: URL,
+    pub url: URI,
     pub http_version: String,
     pub method: HTTPMethod,
     pub path: String,
@@ -131,7 +134,7 @@ impl fmt::Display for HTTPResponse {
 pub struct Request {}
 
 impl Request {
-    fn build_default_headers(url: &URL) -> HashMap<String, String> {
+    fn build_default_headers(url: &URI) -> HashMap<String, String> {
         let output = HashMap::from([
             (
                 String::from(Header::Host.as_str()),
@@ -195,20 +198,8 @@ impl Request {
         Ok(res)
     }
 
-    pub fn send(url: &URL) -> io::Result<HTTPResponse> {
-        let request = HTTPRequest {
-            url: url.clone(),
-            data: String::from(""),
-            http_version: String::from("1.1"),
-            headers: Self::build_default_headers(&url),
-            method: HTTPMethod::GET,
-            path: String::from(&url.path),
-            port: String::from(&url.port),
-        };
-
-        let res = Self::make_request(&request)?;
-
-        let mut res_stream = Cursor::new(res);
+    fn parse_http_response(data_buffer: &Vec<u8>) -> io::Result<HTTPResponse> {
+        let mut res_stream = Cursor::new(data_buffer);
 
         let mut reader = io::BufReader::new(&mut res_stream);
 
@@ -218,44 +209,30 @@ impl Request {
         let mut status_message = String::from("");
 
         // Extract HTTP information
-        match url.scheme {
-            URIScheme::HTTP
-            | URIScheme::HTTPS
-            | URIScheme::ViewSourceHTTP
-            | URIScheme::ViewSourceHTTPS => {
-                let mut status_line: String = String::new();
-                reader.read_line(&mut status_line)?;
+        let mut status_line: String = String::new();
+        reader.read_line(&mut status_line)?;
 
-                let status_parts: Vec<&str> = status_line.split(" ").collect();
+        let status_parts: Vec<&str> = status_line.split(" ").collect();
 
-                assert!(status_parts[0].contains("HTTP/"));
+        assert!(status_parts[0].contains("HTTP/"));
 
-                http_version = String::from(status_parts[0].trim_start_matches("HTTP/"));
+        http_version = String::from(status_parts[0].trim_start_matches("HTTP/"));
 
-                status_code = status_parts[1].parse::<u16>().unwrap();
+        status_code = status_parts[1].parse::<u16>().unwrap();
 
-                if status_code >= 400 && status_code < 600 {
-                    println!("Could not complete request. Dumping...");
-                    println!("{}", request.build())
-                }
+        status_message = String::from(status_parts[2]);
 
-                status_message = String::from(status_parts[2]);
+        loop {
+            let mut current_line: String = String::new();
+            reader.read_line(&mut current_line)?;
 
-                loop {
-                    let mut current_line: String = String::new();
-                    reader.read_line(&mut current_line)?;
-
-                    if current_line == String::from("\r\n") {
-                        break;
-                    }
-
-                    let (header, value) =
-                        current_line.split_once(":").unwrap_or((&current_line, ""));
-
-                    headers.insert(String::from(header), String::from(value.trim()));
-                }
+            if current_line == String::from("\r\n") {
+                break;
             }
-            _ => (),
+
+            let (header, value) = current_line.split_once(":").unwrap_or((&current_line, ""));
+
+            headers.insert(String::from(header), String::from(value.trim()));
         }
 
         let mut data = vec![];
@@ -318,14 +295,210 @@ impl Request {
 
         reader.consume(data_length);
 
-        let response = HTTPResponse {
-            status_code,
+        Ok(HTTPResponse {
             http_version,
+            status_code,
             status_message,
             headers,
             data: data_string,
+        })
+    }
+
+    fn build_request_from_redirect_response(
+        request: HTTPRequest,
+        response: &HTTPResponse,
+    ) -> HTTPRequest {
+        let mut new_request = request.clone();
+
+        let location_header = response
+            .headers
+            .get(Header::Location.as_str())
+            .expect("Redirect response without Location header");
+
+        if location_header.starts_with(URIScheme::HTTP.as_str()) {
+            // Absolute
+            println!("{location_header}");
+            let new_url = URI::parse(&location_header);
+            new_request.url = new_url.clone();
+            new_request.path = new_url.path;
+        } else {
+            // Relative path
+            if new_request.url.path.is_empty() {
+                let new_path = format!("{}", location_header);
+                new_request.url.path = new_path.clone();
+                new_request.path = new_path;
+            } else {
+                let last_slash_index = new_request.url.path.rfind('/').expect("No slash");
+
+                let path_without_last_relative_portion =
+                    new_request.url.path.split_at(last_slash_index).0;
+
+                let new_path = format!("{path_without_last_relative_portion}{location_header}");
+                new_request.url.path = new_path.clone();
+                new_request.path = new_path;
+            }
+        }
+
+        new_request
+    }
+
+    pub fn send(url: &URI) -> io::Result<HTTPResponse> {
+        let mut request = HTTPRequest {
+            url: url.clone(),
+            data: String::from(""),
+            http_version: String::from("1.1"),
+            headers: Self::build_default_headers(&url),
+            method: HTTPMethod::GET,
+            path: String::from(&url.path),
+            port: String::from(&url.port),
         };
 
-        Ok(response)
+        let mut redirect_count = 0;
+        let mut response;
+
+        loop {
+            if redirect_count < 5 {
+                println!("{request:?}");
+                let res = Self::make_request(&request)?;
+
+                response = Self::parse_http_response(&res);
+
+                match &response {
+                    Ok(response) => {
+                        println!("{response}");
+                        if &response.status_code < &300 || &response.status_code > &399 {
+                            break;
+                        }
+
+                        request = Self::build_request_from_redirect_response(request, &response)
+                    }
+                    Err(e) => (),
+                }
+
+                redirect_count += 1;
+            } else {
+                panic!("Exceeded maximum redirect count.");
+            }
+        }
+
+        response
+    }
+}
+
+#[cfg(test)]
+mod redirect_response_to_request {
+    use std::collections::HashMap;
+
+    use crate::request::Header;
+    use crate::url::URI;
+
+    #[test]
+    fn absolute_url_get_redirected_correctly() {
+        let request = super::HTTPRequest {
+            url: URI::parse(&String::from("http://www.example.org/this_is_a_redirect")),
+            http_version: String::from("1.1"),
+            method: super::HTTPMethod::GET,
+            path: String::from(""),
+            port: String::from(""),
+            headers: HashMap::new(),
+            data: String::from(""),
+        };
+
+        let redirect_url_string = String::from("http://www.example.org/redirected");
+
+        let redirect_url = URI::parse(&redirect_url_string);
+
+        let response = super::HTTPResponse {
+            http_version: String::from("1.1"),
+            status_code: 301,
+            status_message: String::new(),
+            headers: HashMap::from([(
+                String::from(Header::Location.as_str()),
+                redirect_url_string.clone(),
+            )]),
+            data: String::from(""),
+        };
+
+        let new_request = super::Request::build_request_from_redirect_response(request, &response);
+
+        assert_eq!(redirect_url.hostname, new_request.url.hostname);
+        assert_eq!(redirect_url.path, new_request.url.path);
+        assert_eq!(redirect_url.path, new_request.path);
+        assert_eq!(redirect_url.port, new_request.url.port);
+        assert_eq!(redirect_url.scheme, new_request.url.scheme);
+    }
+
+    #[test]
+    fn relative_url_get_redirected_correctly() {
+        let request = super::HTTPRequest {
+            url: URI::parse(&String::from("http://www.example.org/this_is_a_redirect")),
+            http_version: String::from("1.1"),
+            method: super::HTTPMethod::GET,
+            path: String::from(""),
+            port: String::from(""),
+            headers: HashMap::new(),
+            data: String::from(""),
+        };
+
+        let redirect_url_string = String::from("http://www.example.org/redirected");
+
+        let redirect_url = URI::parse(&redirect_url_string);
+
+        let response = super::HTTPResponse {
+            http_version: String::from("1.1"),
+            status_code: 301,
+            status_message: String::new(),
+            headers: HashMap::from([(
+                String::from(Header::Location.as_str()),
+                String::from("/redirected"),
+            )]),
+            data: String::from(""),
+        };
+
+        let new_request = super::Request::build_request_from_redirect_response(request, &response);
+
+        assert_eq!(redirect_url.hostname, new_request.url.hostname);
+        assert_eq!(redirect_url.path, new_request.url.path);
+        assert_eq!(redirect_url.path, new_request.path);
+        assert_eq!(redirect_url.port, new_request.url.port);
+        assert_eq!(redirect_url.scheme, new_request.url.scheme);
+    }
+
+    #[test]
+    fn relative_url_get_redirected_correctly_with_deep_path() {
+        let request = super::HTTPRequest {
+            url: URI::parse(&String::from(
+                "http://www.example.org/deep/path/this_is_a_redirect",
+            )),
+            http_version: String::from("1.1"),
+            method: super::HTTPMethod::GET,
+            path: String::from(""),
+            port: String::from(""),
+            headers: HashMap::new(),
+            data: String::from(""),
+        };
+
+        let redirect_url_string = String::from("http://www.example.org/deep/path/redirected");
+
+        let redirect_url = URI::parse(&redirect_url_string);
+
+        let response = super::HTTPResponse {
+            http_version: String::from("1.1"),
+            status_code: 301,
+            status_message: String::new(),
+            headers: HashMap::from([(
+                String::from(Header::Location.as_str()),
+                String::from("/redirected"),
+            )]),
+            data: String::from(""),
+        };
+
+        let new_request = super::Request::build_request_from_redirect_response(request, &response);
+
+        assert_eq!(redirect_url.hostname, new_request.url.hostname);
+        assert_eq!(redirect_url.path, new_request.url.path);
+        assert_eq!(redirect_url.path, new_request.path);
+        assert_eq!(redirect_url.port, new_request.url.port);
+        assert_eq!(redirect_url.scheme, new_request.url.scheme);
     }
 }
