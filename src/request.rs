@@ -1,5 +1,5 @@
-use crate::url::URIScheme;
-use crate::url::URI;
+use crate::uri::URIScheme;
+use crate::uri::URI;
 
 use flate2::read::GzDecoder;
 use openssl::ssl::{SslConnector, SslMethod};
@@ -383,7 +383,7 @@ mod redirect_response_to_request {
     use std::collections::HashMap;
 
     use crate::request::Header;
-    use crate::url::URI;
+    use crate::uri::URI;
 
     #[test]
     fn absolute_url_get_redirected_correctly() {

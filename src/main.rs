@@ -1,13 +1,13 @@
 use crate::request::Request;
-use crate::url::URIScheme;
-use crate::url::URI;
+use crate::uri::URIScheme;
+use crate::uri::URI;
 
 use regex::Regex;
 use std::collections::HashMap;
 use std::env;
 use std::fs;
 
-pub mod url;
+pub mod uri;
 
 pub mod request;
 
