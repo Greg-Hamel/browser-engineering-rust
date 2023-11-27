@@ -39,18 +39,16 @@ impl Scheme {
 
 #[derive(Debug, Clone)]
 pub struct Authority {
-    userinfo: Option<String>,
-    host: String,
-    port: Option<u16>,
+    pub userinfo: Option<String>,
+    pub host: String,
+    pub port: u16,
 }
 
 #[derive(Debug, Clone)]
 pub struct URI {
     pub scheme: Scheme,
     pub authority: Option<Authority>,
-    pub hostname: String,
     pub path: String,
-    pub port: String,
     pub flags: Option<HashMap<String, bool>>,
 }
 
@@ -97,11 +95,9 @@ impl URI {
                     authority: Some(Authority {
                         userinfo: None,
                         host: String::from(hostname),
-                        port: Some(port),
+                        port,
                     }),
-                    hostname: String::from(hostname),
                     path: format!("/{}", path),
-                    port: port.to_string(),
                     flags: None,
                 };
             }
@@ -111,14 +107,8 @@ impl URI {
                 }
                 return Self {
                     scheme,
-                    authority: Some(Authority {
-                        userinfo: None,
-                        host: String::from(""),
-                        port: None,
-                    }),
-                    hostname: String::from(""),
+                    authority: None,
                     path: String::from(remainder),
-                    port: String::from(""),
                     flags: None,
                 };
             }
@@ -126,9 +116,7 @@ impl URI {
                 return Self {
                     scheme,
                     authority: None,
-                    hostname: String::from(""),
                     path: String::from(remainder),
-                    port: String::from(""),
                     flags: None,
                 }
             }
@@ -146,9 +134,8 @@ mod data_scheme_tests {
         let url: String = String::from("data:text/html,Hellow world!");
         let parse_url = URI::parse(&url);
 
-        assert_eq!(parse_url.hostname, "");
+        assert!(parse_url.authority.is_none());
         assert_eq!(parse_url.path, "text/html,Hellow world!");
-        assert_eq!(parse_url.port, "");
         assert_eq!(parse_url.scheme, Scheme::Data);
     }
 }
@@ -163,9 +150,8 @@ mod file_scheme_tests {
         let url: String = String::from("file:///Users/test/main.rs");
         let parse_url = URI::parse(&url);
 
-        assert_eq!(parse_url.hostname, "");
+        assert!(parse_url.authority.is_none());
         assert_eq!(parse_url.path, "/Users/test/main.rs");
-        assert_eq!(parse_url.port, "");
         assert_eq!(parse_url.scheme, Scheme::File);
     }
 }
@@ -180,9 +166,11 @@ mod http_scheme_tests {
         let url: String = String::from("http://www.example.org");
         let parse_url = URI::parse(&url);
 
-        assert_eq!(parse_url.hostname, "www.example.org");
+        let authority = parse_url.authority.unwrap();
+
+        assert_eq!(authority.host, "www.example.org");
         assert_eq!(parse_url.path, "/");
-        assert_eq!(parse_url.port, "80");
+        assert_eq!(authority.port, 80);
         assert_eq!(parse_url.scheme, Scheme::HTTP);
     }
 
@@ -191,9 +179,11 @@ mod http_scheme_tests {
         let url: String = String::from("http://www.example.org/one");
         let parse_url = URI::parse(&url);
 
-        assert_eq!(parse_url.hostname, "www.example.org");
+        let authority = parse_url.authority.unwrap();
+
+        assert_eq!(authority.host, "www.example.org");
         assert_eq!(parse_url.path, "/one");
-        assert_eq!(parse_url.port, "80");
+        assert_eq!(authority.port, 80);
         assert_eq!(parse_url.scheme, Scheme::HTTP);
     }
 
@@ -202,9 +192,11 @@ mod http_scheme_tests {
         let url: String = String::from("http://www.example.org:9090");
         let parse_url = URI::parse(&url);
 
-        assert_eq!(parse_url.hostname, "www.example.org");
+        let authority = parse_url.authority.unwrap();
+
+        assert_eq!(authority.host, "www.example.org");
         assert_eq!(parse_url.path, "/");
-        assert_eq!(parse_url.port, "9090");
+        assert_eq!(authority.port, 9090);
         assert_eq!(parse_url.scheme, Scheme::HTTP);
     }
 }
@@ -219,9 +211,11 @@ mod https_scheme_tests {
         let url: String = String::from("https://www.example.org");
         let parse_url = URI::parse(&url);
 
-        assert_eq!(parse_url.hostname, "www.example.org");
+        let authority = parse_url.authority.unwrap();
+
+        assert_eq!(authority.host, "www.example.org");
         assert_eq!(parse_url.path, "/");
-        assert_eq!(parse_url.port, "443");
+        assert_eq!(authority.port, 443);
         assert_eq!(parse_url.scheme, Scheme::HTTPS);
     }
 
@@ -230,9 +224,11 @@ mod https_scheme_tests {
         let url: String = String::from("https://www.example.org/one");
         let parse_url = URI::parse(&url);
 
-        assert_eq!(parse_url.hostname, "www.example.org");
+        let authority = parse_url.authority.unwrap();
+
+        assert_eq!(authority.host, "www.example.org");
         assert_eq!(parse_url.path, "/one");
-        assert_eq!(parse_url.port, "443");
+        assert_eq!(authority.port, 443);
         assert_eq!(parse_url.scheme, Scheme::HTTPS);
     }
 
@@ -241,9 +237,11 @@ mod https_scheme_tests {
         let url: String = String::from("https://www.example.org:9090");
         let parse_url = URI::parse(&url);
 
-        assert_eq!(parse_url.hostname, "www.example.org");
+        let authority = parse_url.authority.unwrap();
+
+        assert_eq!(authority.host, "www.example.org");
         assert_eq!(parse_url.path, "/");
-        assert_eq!(parse_url.port, "9090");
+        assert_eq!(authority.port, 9090);
         assert_eq!(parse_url.scheme, Scheme::HTTPS);
     }
 }

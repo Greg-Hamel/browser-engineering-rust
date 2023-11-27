@@ -136,7 +136,7 @@ impl Request {
         let output = HashMap::from([
             (
                 String::from(Header::Host.as_str()),
-                String::from(&url.hostname),
+                String::from(&url.authority.as_ref().expect("No authority").host),
             ),
             (
                 String::from(Header::Connection.as_str()),
@@ -158,17 +158,24 @@ impl Request {
     fn make_request(request: &HTTPRequest) -> io::Result<Vec<u8>> {
         let mut res = vec![];
 
+        let request_authority = request
+            .url
+            .authority
+            .as_ref()
+            .expect("No authority")
+            .clone();
+
+        let host = request_authority.host;
+        let port = request_authority.port.to_string();
+
         // Make request
         match request.url.scheme {
             Scheme::HTTPS => {
-                let base_stream =
-                    TcpStream::connect(format!("{}:{}", &request.url.hostname, &request.url.port))
-                        .expect("Couldn't connect to the server...");
+                let base_stream = TcpStream::connect(format!("{}:{}", host, port))
+                    .expect("Couldn't connect to the server...");
                 let connector = SslConnector::builder(SslMethod::tls()).unwrap().build();
 
-                let mut stream = connector
-                    .connect(&request.url.hostname, base_stream)
-                    .unwrap();
+                let mut stream = connector.connect(host.as_str(), base_stream).unwrap();
 
                 stream
                     .write_all(request.build().as_bytes())
@@ -179,9 +186,8 @@ impl Request {
                 stream.read_to_end(&mut res).unwrap();
             }
             Scheme::HTTP => {
-                let mut stream =
-                    TcpStream::connect(format!("{}:{}", &request.url.hostname, &request.url.port))
-                        .expect("Couldn't connect to the server...");
+                let mut stream = TcpStream::connect(format!("{}:{}", host, port))
+                    .expect("Couldn't connect to the server...");
                 stream
                     .write_all(request.build().as_bytes())
                     .expect("Couldn't send data to server");
@@ -190,7 +196,7 @@ impl Request {
 
                 stream.read_to_end(&mut res).unwrap();
             }
-            _ => {}
+            _ => panic!("Unexpected scheme provided to Request"),
         }
 
         Ok(res)
@@ -412,9 +418,25 @@ mod redirect_response_to_request {
 
         let new_request = super::Request::build_request_from_redirect_response(request, &response);
 
-        assert_eq!(redirect_url.hostname, new_request.url.hostname);
+        assert_eq!(
+            redirect_url.authority.as_ref().expect("No authority").host,
+            new_request
+                .url
+                .authority
+                .as_ref()
+                .expect("No authority")
+                .host
+        );
         assert_eq!(redirect_url.path, new_request.url.path);
-        assert_eq!(redirect_url.port, new_request.url.port);
+        assert_eq!(
+            redirect_url.authority.as_ref().expect("No authority").port,
+            new_request
+                .url
+                .authority
+                .as_ref()
+                .expect("No authority")
+                .port
+        );
         assert_eq!(redirect_url.scheme, new_request.url.scheme);
     }
 
@@ -445,9 +467,12 @@ mod redirect_response_to_request {
 
         let new_request = super::Request::build_request_from_redirect_response(request, &response);
 
-        assert_eq!(redirect_url.hostname, new_request.url.hostname);
+        let authority = redirect_url.authority.unwrap();
+        let new_request_authority = new_request.url.authority.unwrap();
+
+        assert_eq!(authority.host, new_request_authority.host);
         assert_eq!(redirect_url.path, new_request.url.path);
-        assert_eq!(redirect_url.port, new_request.url.port);
+        assert_eq!(authority.port, new_request_authority.port);
         assert_eq!(redirect_url.scheme, new_request.url.scheme);
     }
 
@@ -480,9 +505,12 @@ mod redirect_response_to_request {
 
         let new_request = super::Request::build_request_from_redirect_response(request, &response);
 
-        assert_eq!(redirect_url.hostname, new_request.url.hostname);
+        let authority = redirect_url.authority.unwrap();
+        let new_request_authority = new_request.url.authority.unwrap();
+
+        assert_eq!(authority.host, new_request_authority.host);
         assert_eq!(redirect_url.path, new_request.url.path);
-        assert_eq!(redirect_url.port, new_request.url.port);
+        assert_eq!(authority.port, new_request_authority.port);
         assert_eq!(redirect_url.scheme, new_request.url.scheme);
     }
 }
