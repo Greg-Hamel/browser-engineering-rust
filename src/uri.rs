@@ -68,7 +68,7 @@ pub struct URI {
 
 impl URI {
     pub fn parse(url: &String) -> Self {
-        let scheme_regexp = Regex::new(r"^(http|https|file|data|view-source):/?/?").unwrap();
+        let scheme_regexp = Regex::new(r"^(http|https|file|data|view-source):").unwrap();
 
         let mut url_copy = String::from(url.clone());
         let mut scheme = String::from(HTTP_SCHEME);
