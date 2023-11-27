@@ -1,4 +1,4 @@
-use crate::uri::URIScheme;
+use crate::uri::Scheme;
 use crate::uri::URI;
 
 use flate2::read::GzDecoder;
@@ -160,7 +160,7 @@ impl Request {
 
         // Make request
         match request.url.scheme {
-            URIScheme::HTTPS | URIScheme::ViewSourceHTTPS => {
+            Scheme::HTTPS => {
                 let base_stream =
                     TcpStream::connect(format!("{}:{}", &request.url.hostname, &request.url.port))
                         .expect("Couldn't connect to the server...");
@@ -178,7 +178,7 @@ impl Request {
 
                 stream.read_to_end(&mut res).unwrap();
             }
-            URIScheme::HTTP | URIScheme::ViewSourceHTTP => {
+            Scheme::HTTP => {
                 let mut stream =
                     TcpStream::connect(format!("{}:{}", &request.url.hostname, &request.url.port))
                         .expect("Couldn't connect to the server...");
@@ -313,7 +313,7 @@ impl Request {
             .get(Header::Location.as_str())
             .expect("Redirect response without Location header");
 
-        if location_header.starts_with(URIScheme::HTTP.as_str()) {
+        if location_header.starts_with(Scheme::HTTP.as_str()) {
             // Absolute
             println!("{location_header}");
             let new_url = URI::parse(&location_header);

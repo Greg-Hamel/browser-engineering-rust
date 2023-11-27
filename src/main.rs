@@ -1,5 +1,5 @@
 use crate::request::Request;
-use crate::uri::URIScheme;
+use crate::uri::Scheme;
 use crate::uri::URI;
 
 use regex::Regex;
@@ -107,18 +107,18 @@ impl Browser {
         let url = URI::parse(&self.options.url);
 
         match url.scheme {
-            URIScheme::HTTPS | URIScheme::HTTP => {
+            Scheme::HTTPS | Scheme::HTTP => {
                 let response = Request::send(&url).expect("Couldn't parse response...");
                 self.show(&response.data, true)
             }
-            URIScheme::ViewSourceHTTPS | URIScheme::ViewSourceHTTP => {
-                let response = Request::send(&url).expect("Couldn't parse response...");
+            // Scheme::ViewSourceHTTPS | Scheme::ViewSourceHTTP => {
+            //     let response = Request::send(&url).expect("Couldn't parse response...");
 
-                let transformed_response = self.transform(&response.data);
+            //     let transformed_response = self.transform(&response.data);
 
-                self.show(&transformed_response, false)
-            }
-            URIScheme::Data => {
+            //     self.show(&transformed_response, false)
+            // }
+            Scheme::Data => {
                 // _ is the content_type
                 let (_, path_data) = url.path.split_once(',').unwrap_or((&url.path, ""));
 
@@ -126,7 +126,7 @@ impl Browser {
                 let data = String::new() + path_data + "\r\n";
                 self.show(&data, false)
             }
-            URIScheme::File => {
+            Scheme::File => {
                 let data = fs::read_to_string(&url.path).expect("File not found...");
                 self.show(&data, false)
             }
