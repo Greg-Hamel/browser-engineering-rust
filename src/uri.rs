@@ -10,27 +10,50 @@ pub enum URIScheme {
     ViewSourceHTTPS,
 }
 
+const DATA_SCHEME: &str = "data";
+const FILE_SCHEME: &str = "file";
+const HTTP_SCHEME: &str = "http";
+const HTTPS_SCHEME: &str = "https";
+const VIEWSOURCE_HTTP_SCHEME: &str = "view-source:http";
+const VIEWSOURCE_HTTPS_SCHEME: &str = "view-source:https";
+
+const HTTP_SCHEMES: [&str; 4] = [
+    HTTPS_SCHEME,
+    HTTP_SCHEME,
+    VIEWSOURCE_HTTPS_SCHEME,
+    VIEWSOURCE_HTTP_SCHEME,
+];
+
+const SCHEMES: [&str; 6] = [
+    DATA_SCHEME,
+    FILE_SCHEME,
+    HTTP_SCHEME,
+    HTTPS_SCHEME,
+    VIEWSOURCE_HTTPS_SCHEME,
+    VIEWSOURCE_HTTP_SCHEME,
+];
+
 impl URIScheme {
     pub fn from_str(value: &str) -> URIScheme {
         match value {
-            "data" => URIScheme::Data,
-            "file" => URIScheme::File,
-            "https" => URIScheme::HTTPS,
-            "http" => URIScheme::HTTP,
-            "view-source:https" => URIScheme::ViewSourceHTTPS,
-            "view-source:http" => URIScheme::ViewSourceHTTP,
+            DATA_SCHEME => URIScheme::Data,
+            FILE_SCHEME => URIScheme::File,
+            HTTPS_SCHEME => URIScheme::HTTPS,
+            HTTP_SCHEME => URIScheme::HTTP,
+            VIEWSOURCE_HTTPS_SCHEME => URIScheme::ViewSourceHTTPS,
+            VIEWSOURCE_HTTP_SCHEME => URIScheme::ViewSourceHTTP,
             _other => URIScheme::HTTP,
         }
     }
 
     pub fn as_str(&self) -> &'static str {
         match self {
-            URIScheme::Data => "data",
-            URIScheme::File => "file",
-            URIScheme::HTTPS => "https",
-            URIScheme::HTTP => "http",
-            URIScheme::ViewSourceHTTPS => "view-source:https",
-            URIScheme::ViewSourceHTTP => "view-source:http",
+            URIScheme::Data => DATA_SCHEME,
+            URIScheme::File => FILE_SCHEME,
+            URIScheme::HTTPS => HTTPS_SCHEME,
+            URIScheme::HTTP => HTTP_SCHEME,
+            URIScheme::ViewSourceHTTPS => VIEWSOURCE_HTTPS_SCHEME,
+            URIScheme::ViewSourceHTTP => VIEWSOURCE_HTTP_SCHEME,
         }
     }
 }
@@ -48,18 +71,9 @@ impl URI {
         let scheme_regexp = Regex::new(r"^(http|https|file|data|view-source):/?/?").unwrap();
 
         let mut url_copy = String::from(url.clone());
-        let mut scheme = String::from("http");
+        let mut scheme = String::from(HTTP_SCHEME);
 
         if scheme_regexp.is_match(&url_copy) {
-            let _schemes = vec![
-                "http",
-                "https",
-                "file",
-                "data",
-                "view-source:http",
-                "view-source:https",
-            ];
-
             let mut scheme_url = Vec::new();
             let mut scheme_found = false;
             let mut prev = String::new();
@@ -73,7 +87,7 @@ impl URI {
                     prev += scheme_part
                 }
                 if scheme_found == false {
-                    if _schemes.contains(&prev.as_str()) {
+                    if SCHEMES.contains(&prev.as_str()) {
                         scheme_url.push(prev);
                         scheme_found = true;
                         prev = "".to_string();
@@ -89,11 +103,11 @@ impl URI {
             url_copy = String::from(scheme_url[1].as_str());
 
             if [
-                "http",
-                "https",
-                "file",
-                "view-source:http",
-                "view-source:https",
+                HTTP_SCHEME,
+                HTTPS_SCHEME,
+                FILE_SCHEME,
+                VIEWSOURCE_HTTP_SCHEME,
+                VIEWSOURCE_HTTPS_SCHEME,
             ]
             .contains(&scheme.as_str())
                 && url_copy.starts_with("//")
@@ -102,10 +116,10 @@ impl URI {
             }
         }
 
-        if ["http", "https", "view-source:http", "view-source:https"].contains(&scheme.as_str()) {
+        if HTTP_SCHEMES.contains(&scheme.as_str()) {
             let (mut hostname, path) = url_copy.split_once('/').unwrap_or((&url_copy, ""));
 
-            let mut port = if scheme.contains("https") {
+            let mut port = if scheme.contains(HTTPS_SCHEME) {
                 "443"
             } else {
                 "80"
@@ -124,14 +138,14 @@ impl URI {
                 path: format!("/{}", path),
                 port: String::from(port),
             }
-        } else if scheme == "file" {
+        } else if scheme == FILE_SCHEME {
             Self {
                 scheme: URIScheme::from_str(&scheme),
                 hostname: String::from(""),
                 path: String::from(url_copy),
                 port: String::from(""),
             }
-        } else if scheme == "data" {
+        } else if scheme == DATA_SCHEME {
             Self {
                 scheme: URIScheme::from_str(&scheme),
                 hostname: String::from(""),
