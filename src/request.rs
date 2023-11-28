@@ -207,11 +207,6 @@ impl Request {
 
         let mut reader = io::BufReader::new(&mut res_stream);
 
-        let mut headers = HashMap::new();
-        let mut status_code = 200;
-        let mut http_version = String::from("");
-        let mut status_message = String::from("");
-
         // Extract HTTP information
         let mut status_line: String = String::new();
         reader.read_line(&mut status_line)?;
@@ -220,11 +215,13 @@ impl Request {
 
         assert!(status_parts[0].contains("HTTP/"));
 
-        http_version = String::from(status_parts[0].trim_start_matches("HTTP/"));
+        let mut headers = HashMap::new();
 
-        status_code = status_parts[1].parse::<u16>().unwrap();
+        let http_version = String::from(status_parts[0].trim_start_matches("HTTP/"));
 
-        status_message = String::from(status_parts[2]);
+        let status_code = status_parts[1].parse::<u16>().unwrap();
+
+        let status_message = String::from(status_parts[2]);
 
         loop {
             let mut current_line: String = String::new();
