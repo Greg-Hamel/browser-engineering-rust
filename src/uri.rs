@@ -7,12 +7,14 @@ pub enum Scheme {
     File,
     HTTP,
     HTTPS,
+    VIEWSOURCE,
 }
 
 const DATA_SCHEME: &str = "data";
 const FILE_SCHEME: &str = "file";
 const HTTP_SCHEME: &str = "http";
 const HTTPS_SCHEME: &str = "https";
+const VIEWSOURCE_SCHEME: &str = "view-source";
 
 const SCHEME_REGEX: &str = r"\w[\w\d+-.]*";
 
@@ -23,6 +25,7 @@ impl Scheme {
             FILE_SCHEME => Ok(Scheme::File),
             HTTPS_SCHEME => Ok(Scheme::HTTPS),
             HTTP_SCHEME => Ok(Scheme::HTTP),
+            VIEWSOURCE_SCHEME => Ok(Scheme::VIEWSOURCE),
             _other => Err("Invalid Scheme."),
         }
     }
@@ -33,6 +36,7 @@ impl Scheme {
             Scheme::File => FILE_SCHEME,
             Scheme::HTTPS => HTTPS_SCHEME,
             Scheme::HTTP => HTTP_SCHEME,
+            Scheme::VIEWSOURCE => VIEWSOURCE_SCHEME,
         }
     }
 }
@@ -49,7 +53,7 @@ pub struct URI {
     pub scheme: Scheme,
     pub authority: Option<Authority>,
     pub path: String,
-    pub flags: Option<HashMap<String, bool>>,
+    pub flags: HashMap<String, bool>,
 }
 
 impl URI {
@@ -98,7 +102,7 @@ impl URI {
                         port,
                     }),
                     path: format!("/{}", path),
-                    flags: None,
+                    flags: HashMap::new(),
                 };
             }
             Scheme::File => {
@@ -109,7 +113,7 @@ impl URI {
                     scheme,
                     authority: None,
                     path: String::from(remainder),
-                    flags: None,
+                    flags: HashMap::new(),
                 };
             }
             Scheme::Data => {
@@ -117,8 +121,18 @@ impl URI {
                     scheme,
                     authority: None,
                     path: String::from(remainder),
-                    flags: None,
+                    flags: HashMap::new(),
                 }
+            }
+            Scheme::VIEWSOURCE => {
+                let mut flags_hashmap: HashMap<String, bool> = HashMap::new();
+
+                flags_hashmap.insert(String::from("view-source"), true);
+
+                return URI {
+                    flags: flags_hashmap,
+                    ..URI::parse(&remainder)
+                };
             }
         }
     }
@@ -243,5 +257,53 @@ mod https_scheme_tests {
         assert_eq!(parse_url.path, "/");
         assert_eq!(authority.port, 9090);
         assert_eq!(parse_url.scheme, Scheme::HTTPS);
+    }
+}
+
+#[cfg(test)]
+mod viewsource_scheme_tests {
+    use super::Scheme;
+    use super::URI;
+
+    #[test]
+    fn parses_viewsource_and_http_scheme() {
+        let url: String = String::from("view-source:http://www.example.org");
+        let parse_url = URI::parse(&url);
+
+        let authority = parse_url.authority.unwrap();
+
+        assert_eq!(authority.host, "www.example.org");
+        assert_eq!(parse_url.path, "/");
+        assert_eq!(authority.port, 80);
+        assert_eq!(parse_url.scheme, Scheme::HTTP);
+        assert_eq!(parse_url.flags.get("view-source"), Some(&true))
+    }
+
+    #[test]
+    fn parses_viewsource_and_https_scheme() {
+        let url: String = String::from("view-source:https://www.example.org");
+        let parse_url = URI::parse(&url);
+
+        let authority = parse_url.authority.unwrap();
+
+        assert_eq!(authority.host, "www.example.org");
+        assert_eq!(parse_url.path, "/");
+        assert_eq!(authority.port, 443);
+        assert_eq!(parse_url.scheme, Scheme::HTTPS);
+        assert_eq!(parse_url.flags.get("view-source"), Some(&true))
+    }
+
+    #[test]
+    fn viewsource_is_not_a_flag_if_not_the_scheme() {
+        let url: String = String::from("https://www.example.org");
+        let parse_url = URI::parse(&url);
+
+        let authority = parse_url.authority.unwrap();
+
+        assert_eq!(authority.host, "www.example.org");
+        assert_eq!(parse_url.path, "/");
+        assert_eq!(authority.port, 443);
+        assert_eq!(parse_url.scheme, Scheme::HTTPS);
+        assert_eq!(parse_url.flags.get("view-source"), None)
     }
 }

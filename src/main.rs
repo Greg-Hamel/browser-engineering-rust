@@ -2,6 +2,7 @@ use crate::request::Request;
 use crate::uri::Scheme;
 use crate::uri::URI;
 
+use core::panic;
 use regex::Regex;
 use std::collections::HashMap;
 use std::env;
@@ -109,15 +110,14 @@ impl Browser {
         match url.scheme {
             Scheme::HTTPS | Scheme::HTTP => {
                 let response = Request::send(&url).expect("Couldn't parse response...");
-                self.show(&response.data, true)
+
+                if url.flags.contains_key(&String::from("view-source")) {
+                    let transformed_response = self.transform(&response.data);
+                    self.show(&transformed_response, false)
+                } else {
+                    self.show(&response.data, true)
+                }
             }
-            // Scheme::ViewSourceHTTPS | Scheme::ViewSourceHTTP => {
-            //     let response = Request::send(&url).expect("Couldn't parse response...");
-
-            //     let transformed_response = self.transform(&response.data);
-
-            //     self.show(&transformed_response, false)
-            // }
             Scheme::Data => {
                 // _ is the content_type
                 let (_, path_data) = url.path.split_once(',').unwrap_or((&url.path, ""));
@@ -130,6 +130,7 @@ impl Browser {
                 let data = fs::read_to_string(&url.path).expect("File not found...");
                 self.show(&data, false)
             }
+            Scheme::VIEWSOURCE => panic!("Unexpected view-source scheme provided to browser."),
         }
     }
 
