@@ -1,3 +1,4 @@
+use crate::cache::Cache;
 use crate::uri::Scheme;
 use crate::uri::URI;
 
@@ -354,14 +355,12 @@ impl Request {
 
         loop {
             if redirect_count < 5 {
-                println!("{request:?}");
                 let res = Self::make_request(&request)?;
 
                 response = Self::parse_http_response(&res);
 
                 match &response {
                     Ok(response) => {
-                        println!("{response}");
                         if &response.status_code < &300 || &response.status_code > &399 {
                             break;
                         }

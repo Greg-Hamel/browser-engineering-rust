@@ -1,7 +1,7 @@
 use regex::Regex;
 use std::{collections::HashMap, result::Result};
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Clone, Eq)]
 pub enum Scheme {
     Data,
     File,
@@ -41,14 +41,14 @@ impl Scheme {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Authority {
     pub userinfo: Option<String>,
     pub host: String,
     pub port: u16,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct URI {
     pub scheme: Scheme,
     pub authority: Option<Authority>,

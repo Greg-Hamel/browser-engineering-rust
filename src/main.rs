@@ -8,9 +8,9 @@ use std::collections::HashMap;
 use std::env;
 use std::fs;
 
-pub mod uri;
-
+pub mod cache;
 pub mod request;
+pub mod uri;
 
 struct Options {
     debug: bool,
@@ -19,11 +19,15 @@ struct Options {
 
 struct Browser {
     options: Options,
+    cache: cache::Cache,
 }
 
 impl Browser {
     pub fn new(options: Options) -> Self {
-        Self { options }
+        Self {
+            options,
+            cache: cache::Cache::initialize(),
+        }
     }
 
     fn transform(&mut self, data: &str) -> String {
@@ -105,14 +109,30 @@ impl Browser {
     }
 
     fn load(&mut self) {
-        let url = URI::parse(&self.options.url);
+        let uri = URI::parse(&self.options.url);
 
-        match url.scheme {
+        match uri.scheme {
             Scheme::HTTPS | Scheme::HTTP => {
-                let response = Request::send(&url).expect("Couldn't parse response...");
+                let cache_value = self.cache.extract(&uri);
 
-                if url.flags.contains_key(&String::from("view-source")) {
-                    let transformed_response = self.transform(&response.data);
+                let data = match cache_value {
+                    Ok(value) => {
+                        if self.options.debug {
+                            println!("[DEBUG] Cache hit");
+                        }
+                        value
+                    }
+                    _ => {
+                        let response = Request::send(&uri).expect("Couldn't parse response...");
+                        self.cache.insert(&uri, response.data.clone(), 0);
+                        response.data
+                    }
+                };
+
+                let response = Request::send(&uri).expect("Couldn't parse response...");
+
+                if uri.flags.contains_key(&String::from("view-source")) {
+                    let transformed_response = self.transform(&data.as_str());
                     self.show(&transformed_response, false)
                 } else {
                     self.show(&response.data, true)
@@ -120,14 +140,14 @@ impl Browser {
             }
             Scheme::Data => {
                 // _ is the content_type
-                let (_, path_data) = url.path.split_once(',').unwrap_or((&url.path, ""));
+                let (_, path_data) = uri.path.split_once(',').unwrap_or((&uri.path, ""));
 
                 // Writing end-of-file.
                 let data = String::new() + path_data + "\r\n";
                 self.show(&data, false)
             }
             Scheme::File => {
-                let data = fs::read_to_string(&url.path).expect("File not found...");
+                let data = fs::read_to_string(&uri.path).expect("File not found...");
                 self.show(&data, false)
             }
             Scheme::VIEWSOURCE => panic!("Unexpected view-source scheme provided to browser."),
