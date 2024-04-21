@@ -66,7 +66,13 @@ impl Cache {
             Err(e) => panic!("{e}"),
         }
 
-        Self::create_cache_control_file();
+        Self::create_cache_control_file().unwrap();
+    }
+
+    fn clear() {
+        fs::remove_dir_all(Self::get_cache_path()).expect("Cannot remove directory");
+
+        Self::initialize_cache_dir()
     }
 
     fn read_cache_control() -> Vec<Item> {
@@ -161,7 +167,7 @@ impl Cache {
         Self::write_to_cache_control(&self)
     }
 
-    pub fn initialize() -> Cache {
+    pub fn initialize(clear_cache: bool) -> Cache {
         let cache_path = Self::get_cache_path();
 
         if !cache_path.is_dir() {
@@ -169,6 +175,10 @@ impl Cache {
 
             return Self { items: vec![] };
         } else {
+            if clear_cache {
+                Self::clear()
+            }
+
             return Self {
                 items: Self::read_cache_control(),
             };

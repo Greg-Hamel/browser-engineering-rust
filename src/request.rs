@@ -1,4 +1,3 @@
-use crate::cache::Cache;
 use crate::uri::Scheme;
 use crate::uri::URI;
 

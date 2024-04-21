@@ -1,20 +1,24 @@
+use crate::logger::CONSOLE_LOGGER;
 use crate::request::Request;
 use crate::uri::Scheme;
 use crate::uri::URI;
 
 use core::panic;
+use log::LevelFilter;
 use regex::Regex;
 use std::collections::HashMap;
 use std::env;
 use std::fs;
 
 pub mod cache;
+pub mod logger;
 pub mod request;
 pub mod uri;
 
 struct Options {
     debug: bool,
     url: String,
+    clear_cache: bool,
 }
 
 struct Browser {
@@ -24,10 +28,8 @@ struct Browser {
 
 impl Browser {
     pub fn new(options: Options) -> Self {
-        Self {
-            options,
-            cache: cache::Cache::initialize(),
-        }
+        let cache = cache::Cache::initialize(options.clear_cache);
+        Self { cache, options }
     }
 
     fn transform(&mut self, data: &str) -> String {
@@ -117,9 +119,7 @@ impl Browser {
 
                 let data = match cache_value {
                     Ok(value) => {
-                        if self.options.debug {
-                            println!("[DEBUG] Cache hit");
-                        }
+                        log::debug!("Cache hit");
                         value
                     }
                     _ => {
@@ -160,21 +160,33 @@ impl Browser {
 }
 
 fn main() {
+    log::set_logger(&CONSOLE_LOGGER).unwrap();
+    log::set_max_level(LevelFilter::Info);
     let args: Vec<String> = env::args().collect();
 
     let mut options = Options {
         debug: false,
         url: String::new(),
+        clear_cache: false,
     };
 
     for argument in &args[1..] {
         if argument == "--debug" {
             options.debug = true;
+        } else if argument == "--clearCache" {
+            options.clear_cache = true;
         } else if options.url.len() == 0 && !argument.starts_with('-') {
             options.url = String::from(argument);
         } else {
             panic!("Unknown argument {argument}")
         }
+    }
+
+    if options.debug {
+        log::set_max_level(LevelFilter::Debug);
+        log::debug!("Debug Mode enabled");
+    } else {
+        log::set_max_level(LevelFilter::Info);
     }
 
     Browser::new(options).run();
