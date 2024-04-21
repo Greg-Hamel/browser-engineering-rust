@@ -1,9 +1,10 @@
+use crate::cache::Cache;
 use crate::uri::Scheme;
 use crate::uri::URI;
 
 use flate2::read::GzDecoder;
 use openssl::ssl::{SslConnector, SslMethod};
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::fmt;
 use std::io::{self, BufRead, Cursor, Read, Write};
 use std::net::TcpStream;
@@ -63,7 +64,7 @@ pub struct HTTPRequest {
     pub url: URI,
     pub http_version: String,
     pub method: HTTPMethod,
-    pub headers: HashMap<String, String>,
+    pub headers: BTreeMap<String, String>,
     pub data: String,
 }
 
@@ -96,7 +97,7 @@ pub struct HTTPResponse {
     pub http_version: String,
     pub status_code: u16,
     pub status_message: String,
-    pub headers: HashMap<String, String>,
+    pub headers: BTreeMap<String, String>,
     pub data: String,
 }
 
@@ -129,16 +130,29 @@ impl fmt::Display for HTTPResponse {
     }
 }
 
-pub struct Request {}
+pub struct RequestOptions {
+    pub cache: Cache,
+}
+
+pub struct Request {
+    cache: Cache,
+}
 
 impl Request {
-    fn build_default_headers(url: &URI) -> HashMap<String, String> {
-        let output = HashMap::from([
+    pub fn init(options: RequestOptions) -> Request {
+        Request {
+            cache: options.cache,
+        }
+    }
+
+    fn build_default_headers(url: &URI) -> BTreeMap<String, String> {
+        let output = BTreeMap::from([
             (
                 String::from(Header::Host.as_str()),
                 String::from(&url.authority.as_ref().expect("No authority").host),
             ),
             (
+                // TODO: Implement keep-alive http://browser.engineering/http.html#exercises
                 String::from(Header::Connection.as_str()),
                 String::from("close"),
             ),
@@ -215,7 +229,7 @@ impl Request {
 
         assert!(status_parts[0].contains("HTTP/"));
 
-        let mut headers = HashMap::new();
+        let mut headers = BTreeMap::new();
 
         let http_version = String::from(status_parts[0].trim_start_matches("HTTP/"));
 
@@ -340,7 +354,7 @@ impl Request {
         new_request
     }
 
-    pub fn send(url: &URI) -> io::Result<HTTPResponse> {
+    pub fn send(&mut self, url: &URI) -> io::Result<HTTPResponse> {
         let mut request = HTTPRequest {
             url: url.clone(),
             data: String::from(""),
@@ -350,24 +364,49 @@ impl Request {
         };
 
         let mut redirect_count = 0;
-        let mut response;
+        let mut has_response = false;
+        let mut response: HTTPResponse = HTTPResponse {
+            http_version: String::from(""),
+            status_code: 404,
+            status_message: String::from(""),
+            headers: BTreeMap::new(),
+            data: String::from(""),
+        };
 
-        loop {
+        while !has_response {
             if redirect_count < 5 {
-                let res = Self::make_request(&request)?;
+                let cache_value = self.cache.extract(&request);
 
-                response = Self::parse_http_response(&res);
-
-                match &response {
-                    Ok(response) => {
-                        if &response.status_code < &300 || &response.status_code > &399 {
-                            break;
-                        }
-
-                        request = Self::build_request_from_redirect_response(request, &response)
+                match cache_value {
+                    Ok(value) => {
+                        log::debug!("Cache hit");
+                        has_response = true;
+                        response = Self::parse_http_response(&value).unwrap();
                     }
-                    Err(e) => (),
-                }
+                    _ => {
+                        let res = Self::make_request(&request)?;
+
+                        let temp_response = Self::parse_http_response(&res);
+                        self.cache.insert(&request, res, 0);
+
+                        match temp_response {
+                            Ok(temp_response) => {
+                                if &temp_response.status_code < &300
+                                    || &temp_response.status_code > &399
+                                {
+                                    has_response = true;
+                                    response = temp_response;
+                                } else {
+                                    request = Self::build_request_from_redirect_response(
+                                        request,
+                                        &temp_response,
+                                    )
+                                }
+                            }
+                            Err(e) => (),
+                        }
+                    }
+                };
 
                 redirect_count += 1;
             } else {
@@ -375,13 +414,17 @@ impl Request {
             }
         }
 
-        response
+        if has_response {
+            return Ok(response);
+        }
+
+        return Err(io::Error::new(io::ErrorKind::Other, "No response"));
     }
 }
 
 #[cfg(test)]
 mod redirect_response_to_request {
-    use std::collections::HashMap;
+    use std::collections::BTreeMap;
 
     use crate::request::Header;
     use crate::uri::URI;
@@ -392,7 +435,7 @@ mod redirect_response_to_request {
             url: URI::parse(&String::from("http://www.example.org/this_is_a_redirect")),
             http_version: String::from("1.1"),
             method: super::HTTPMethod::GET,
-            headers: HashMap::new(),
+            headers: BTreeMap::new(),
             data: String::from(""),
         };
 
@@ -404,7 +447,7 @@ mod redirect_response_to_request {
             http_version: String::from("1.1"),
             status_code: 301,
             status_message: String::new(),
-            headers: HashMap::from([(
+            headers: BTreeMap::from([(
                 String::from(Header::Location.as_str()),
                 redirect_url_string.clone(),
             )]),
@@ -441,7 +484,7 @@ mod redirect_response_to_request {
             url: URI::parse(&String::from("http://www.example.org/this_is_a_redirect")),
             http_version: String::from("1.1"),
             method: super::HTTPMethod::GET,
-            headers: HashMap::new(),
+            headers: BTreeMap::new(),
             data: String::from(""),
         };
 
@@ -453,7 +496,7 @@ mod redirect_response_to_request {
             http_version: String::from("1.1"),
             status_code: 301,
             status_message: String::new(),
-            headers: HashMap::from([(
+            headers: BTreeMap::from([(
                 String::from(Header::Location.as_str()),
                 String::from("/redirected"),
             )]),
@@ -479,7 +522,7 @@ mod redirect_response_to_request {
             )),
             http_version: String::from("1.1"),
             method: super::HTTPMethod::GET,
-            headers: HashMap::new(),
+            headers: BTreeMap::new(),
             data: String::from(""),
         };
 
@@ -491,7 +534,7 @@ mod redirect_response_to_request {
             http_version: String::from("1.1"),
             status_code: 301,
             status_message: String::new(),
-            headers: HashMap::from([(
+            headers: BTreeMap::from([(
                 String::from(Header::Location.as_str()),
                 String::from("/redirected"),
             )]),

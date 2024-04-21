@@ -1,5 +1,5 @@
 use crate::logger::CONSOLE_LOGGER;
-use crate::request::Request;
+use crate::request::{Request, RequestOptions};
 use crate::uri::Scheme;
 use crate::uri::URI;
 
@@ -23,13 +23,17 @@ struct Options {
 
 struct Browser {
     options: Options,
-    cache: cache::Cache,
+    request: Request,
 }
 
 impl Browser {
     pub fn new(options: Options) -> Self {
         let cache = cache::Cache::initialize(options.clear_cache);
-        Self { cache, options }
+        let requester = Request::init(RequestOptions { cache });
+        Self {
+            options,
+            request: requester,
+        }
     }
 
     fn transform(&mut self, data: &str) -> String {
@@ -115,24 +119,10 @@ impl Browser {
 
         match uri.scheme {
             Scheme::HTTPS | Scheme::HTTP => {
-                let cache_value = self.cache.extract(&uri);
-
-                let data = match cache_value {
-                    Ok(value) => {
-                        log::debug!("Cache hit");
-                        value
-                    }
-                    _ => {
-                        let response = Request::send(&uri).expect("Couldn't parse response...");
-                        self.cache.insert(&uri, response.data.clone(), 0);
-                        response.data
-                    }
-                };
-
-                let response = Request::send(&uri).expect("Couldn't parse response...");
+                let response = self.request.send(&uri).expect("Couldn't parse response...");
 
                 if uri.flags.contains_key(&String::from("view-source")) {
-                    let transformed_response = self.transform(&data.as_str());
+                    let transformed_response = self.transform(&response.data.as_str());
                     self.show(&transformed_response, false)
                 } else {
                     self.show(&response.data, true)

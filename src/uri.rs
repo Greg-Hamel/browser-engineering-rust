@@ -136,6 +136,27 @@ impl URI {
             }
         }
     }
+
+    pub fn as_str(&self) -> String {
+        let mut uri = format!("{}:", self.scheme.as_str());
+
+        match self.scheme {
+            Scheme::HTTP | Scheme::HTTPS => {
+                let authority = self.authority.as_ref().unwrap();
+                uri.push_str("//");
+                uri.push_str(&authority.host);
+
+                if authority.port != 80 {
+                    uri.push_str(&format!(":{}", authority.port));
+                }
+            }
+            _ => {}
+        }
+
+        uri.push_str(&self.path);
+
+        uri
+    }
 }
 
 #[cfg(test)]

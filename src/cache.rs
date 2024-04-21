@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 
 use sha2::{Digest, Sha256};
 
-use crate::uri::URI;
+use crate::request::{HTTPMethod, HTTPRequest};
 
 const CACHE_PATH: &str = ".cache/";
 
@@ -28,18 +28,13 @@ fn extract_item_from(string_vec: Vec<&str>) -> Item {
     }
 }
 
-fn hash_from(uri: &URI) -> String {
+fn hash_from(request: HTTPRequest) -> String {
     let mut hasher = Sha256::new();
-    hasher.update(uri.path.as_bytes());
+    hasher.update(request.url.as_str());
 
-    match &uri.authority {
-        Some(authority) => {
-            hasher.update(authority.host.as_bytes());
-
-            hasher.update(authority.port.to_string().as_bytes());
-        }
-        None => (),
-    }
+    request.headers.iter().for_each(|(key, value)| {
+        hasher.update(format!("{}: {}", key, value));
+    });
 
     let value = hasher.finalize();
 
@@ -117,31 +112,41 @@ impl Cache {
         file.write_all(data.as_bytes()).unwrap();
     }
 
-    fn read_file(path_string: PathBuf) -> String {
+    fn read_file(path_string: PathBuf) -> Vec<u8> {
         let mut file = OpenOptions::new().read(true).open(path_string).unwrap();
 
-        let mut contents = String::new();
-        file.read_to_string(&mut contents).unwrap();
+        let mut contents = Vec::new();
+        file.read_to_end(&mut contents).unwrap();
 
         contents
     }
 
-    pub fn extract(&mut self, uri: &URI) -> io::Result<String> {
-        for item in &self.items {
-            if item.path_string == hash_from(&uri) {
-                // TODO: implement expiry check
-                let file_path = Self::get_cache_path().join(&item.path_string);
-                return Ok(Self::read_file(file_path));
+    pub fn extract(&self, request: &HTTPRequest) -> io::Result<Vec<u8>> {
+        match request.method {
+            HTTPMethod::GET => {
+                for item in &self.items {
+                    if item.path_string == hash_from(request.clone()) {
+                        // TODO: implement expiry check
+                        let file_path = Self::get_cache_path().join(&item.path_string);
+                        return Ok(Self::read_file(file_path));
+                    }
+                }
+
+                return Err(Error::new(
+                    ErrorKind::NotFound,
+                    format!("Value not found in cache"),
+                ));
+            }
+            _ => {
+                return Err(Error::new(
+                    ErrorKind::InvalidInput,
+                    format!("Method not supported"),
+                ));
             }
         }
-
-        return Err(Error::new(
-            ErrorKind::NotFound,
-            format!("Value not found in cache"),
-        ));
     }
 
-    fn write_file(path: PathBuf, data: String) {
+    fn write_file(path: PathBuf, data: Vec<u8>) {
         // write data to file at path
         let mut file = OpenOptions::new()
             .write(true)
@@ -149,15 +154,15 @@ impl Cache {
             .open(path)
             .unwrap();
 
-        file.write_all(data.as_bytes()).unwrap();
+        file.write_all(&data.as_slice()).unwrap();
     }
 
-    pub fn insert(&mut self, uri: &URI, data: String, expiry: u64) {
-        let file_name_hash = hash_from(uri);
+    pub fn insert(&mut self, request: &HTTPRequest, response: Vec<u8>, expiry: u64) {
+        let file_name_hash = hash_from(request.clone());
 
         let file_path = Self::get_cache_path().join(&file_name_hash);
 
-        Self::write_file(file_path, data);
+        Self::write_file(file_path, response);
 
         self.items.push(Item {
             expiry,
