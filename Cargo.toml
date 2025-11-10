@@ -5,7 +5,9 @@ edition = "2021"
 
 [dependencies]
 flate2 = "1.0.27"
+gtk = { version = "0.10.1", package = "gtk4", features = ["v4_20"] }
 log = "0.4.21"
 openssl = "0.10.54"
+pangocairo = "0.21.2"
 regex = "1.9.1"
 sha2 = "0.10.8"
