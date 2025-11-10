@@ -6,7 +6,7 @@ use crate::uri::URI;
 use core::panic;
 use gtk::gio::ApplicationCommandLine;
 use gtk::glib::ExitCode;
-use gtk::{gio, pango, Application, DrawingArea};
+use gtk::{cairo, gio, pango, Application, DrawingArea};
 use gtk::{prelude::*, ApplicationWindow};
 use log::LevelFilter;
 use pangocairo;
@@ -26,6 +26,11 @@ struct Options {
     debug: bool,
     clear_cache: bool,
 }
+#[derive(Clone)]
+struct DiscreteContent {
+    content: String,
+    position: (f64, f64),
+}
 
 struct Browser {
     options: Options,
@@ -34,6 +39,12 @@ struct Browser {
     request: Request,
     content: String,
 }
+
+const H_STEP: f64 = 13.0;
+const V_STEP: f64 = 18.0;
+
+const WIDTH: i32 = 600;
+const HEIGHT: i32 = 600;
 
 impl Browser {
     pub fn new(options: Options) -> Self {
@@ -64,7 +75,7 @@ impl Browser {
         String::from(gt_re.replace_all(&no_lt.as_str(), "&gt;"))
     }
 
-    fn parse_content(&mut self, source: &str, only_body: bool) -> String {
+    fn lex(&mut self, source: &str, only_body: bool) -> String {
         let mut in_angle = false;
         let mut in_body = false;
         let mut result = String::new();
@@ -136,7 +147,7 @@ impl Browser {
     }
 
     fn show(&mut self, source: &str, only_body: bool) {
-        self.content = self.parse_content(source, only_body);
+        self.content = self.lex(source, only_body);
     }
 
     fn load(&mut self, url: String) {
@@ -178,53 +189,80 @@ impl Browser {
         }
     }
 
-    fn build_ui(app: &Application, content: &str) {
+    fn layout(text: &str, window_width: i32) -> Vec<DiscreteContent> {
+        let mut display_list: Vec<DiscreteContent> = Vec::new();
+        let mut cursor_x = H_STEP;
+        let mut cursor_y = V_STEP;
+
+        let characters = text.chars();
+
+        for content in characters {
+            let discrete_content = DiscreteContent {
+                content: content.to_string(),
+                position: (cursor_x, cursor_y),
+            };
+
+            display_list.push(discrete_content);
+
+            match content {
+                '\n' => {
+                    cursor_x = H_STEP;
+                    cursor_y += V_STEP;
+                }
+                _ => {
+                    cursor_x += H_STEP;
+                }
+            }
+
+            if cursor_x as i32 >= window_width {
+                cursor_x = H_STEP;
+                cursor_y += V_STEP;
+            }
+        }
+
+        display_list
+    }
+
+    fn build_drawing_area() -> DrawingArea {
+        log::debug!("Creating Drawing Area");
+
+        let drawing_area = DrawingArea::new();
+        drawing_area.set_content_width(WIDTH);
+        drawing_area.set_content_height(HEIGHT);
+
+        drawing_area
+    }
+
+    fn build_window(app: &Application) -> ApplicationWindow {
         log::debug!("Building UI");
         let window = ApplicationWindow::new(app);
 
         // Create a window and set the title
         window.set_title(Some("Bored Browser"));
-        window.set_default_width(800);
-        window.set_default_height(600);
+        window.set_default_width(WIDTH);
+        window.set_default_height(HEIGHT);
 
-        log::debug!("Creating Drawing Area");
+        window
+    }
 
-        let drawing_area = DrawingArea::new();
-        drawing_area.set_content_width(800);
-        drawing_area.set_content_height(600);
-
-        let content_clone = content.to_string();
-        drawing_area.set_draw_func(move |area, cr, width, height| {
-            // Set background color to white
-            cr.set_source_rgba(1.0, 1.0, 1.0, 1.0);
-            cr.paint().unwrap();
-
+    fn draw_to(area: &DrawingArea, display_list: Vec<DiscreteContent>, context: &cairo::Context) {
+        for content in display_list {
             // Create a Pango layout for the parsed content
-            let layout = area.create_pango_layout(Some(&content_clone));
+            let layout = area.create_pango_layout(Some(&content.content.to_string()));
 
             // Set font
             let font_desc = pango::FontDescription::from_string("Sans 14");
             layout.set_font_description(Some(&font_desc));
 
-            let margin = 10.0;
-
-            // Set layout width to match drawing area width
-            layout.set_width((width - (2.0 * margin) as i32) * pango::SCALE); // 10px margin on each side
-            layout.set_wrap(pango::WrapMode::Char);
-
             // Set text color to black
-            cr.set_source_rgba(0.0, 0.0, 0.0, 1.0);
+            context.set_source_rgba(0.0, 0.0, 0.0, 1.0);
 
             // Position the text with some margin
-            cr.move_to(margin, margin);
+            context.move_to(content.position.0, content.position.1);
 
             // Draw the layout
-            pangocairo::functions::show_layout(cr, &layout);
-        });
-
-        window.set_child(Some(&drawing_area));
-        // Present window
-        window.present();
+            pangocairo::functions::show_layout(context, &layout);
+        }
     }
 
     fn handle_command_line(app: &Application, command_line: &ApplicationCommandLine) -> ExitCode {
@@ -253,9 +291,28 @@ impl Browser {
 
         log::debug!("Response Loaded");
 
-        let content = self.content.clone();
+        let content = self.content.to_string();
         self.app.connect_activate(move |app| {
-            Self::build_ui(&app, &content);
+            log::debug!("Connection activated");
+            let window = Self::build_window(&app);
+
+            let drawing_area = Self::build_drawing_area();
+
+            let content_clone = content.clone();
+
+            drawing_area.set_draw_func(move |area, cr, width, height| {
+                // Set background color to white
+                cr.set_source_rgba(1.0, 1.0, 1.0, 1.0);
+                cr.paint().unwrap();
+
+                let display_list = Self::layout(&content_clone, width);
+
+                Self::draw_to(area, display_list, cr);
+            });
+
+            window.set_child(Some(&drawing_area));
+            // Present window
+            window.present();
         });
 
         self.app.run();
