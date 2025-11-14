@@ -4,10 +4,15 @@ use crate::uri::Scheme;
 use crate::uri::URI;
 
 use core::panic;
-use gtk::gio::ApplicationCommandLine;
+use gtk::gio::{Application, ApplicationCommandLine};
 use gtk::glib::ExitCode;
-use gtk::{cairo, gio, pango, Application, DrawingArea};
-use gtk::{prelude::*, ApplicationWindow};
+
+// use gio::prelude::*;
+use gtk::DrawingArea;
+
+use gtk::cairo::{Context, FontSlant, FontWeight};
+use gtk::gio;
+use gtk::prelude::*;
 use log::LevelFilter;
 use pangocairo;
 use regex::Regex;
@@ -22,6 +27,9 @@ pub mod uri;
 
 const APP_ID: &str = "com.greghamel.bored-browser";
 
+const DEBUG_STR: &str = "--debug";
+const CLEAR_CACHE_STR: &str = "--clear-cache";
+
 struct Options {
     debug: bool,
     clear_cache: bool,
@@ -35,9 +43,9 @@ struct DiscreteContent {
 struct Browser {
     options: Options,
     url: String,
-    app: Application,
     request: Request,
     content: String,
+    scroll_position: i32,
 }
 
 const H_STEP: f64 = 13.0;
@@ -53,16 +61,14 @@ impl Browser {
         let requester = Request::init(RequestOptions { cache });
         log::debug!("Request initialized");
 
-        let app = Application::new(Some(APP_ID), Default::default());
-
         log::debug!("Application initialized");
 
         Self {
             options,
             url: String::from(""),
-            app,
             request: requester,
             content: String::new(),
+            scroll_position: 100,
         }
     }
 
@@ -190,6 +196,7 @@ impl Browser {
     }
 
     fn layout(text: &str, window_width: i32) -> Vec<DiscreteContent> {
+        log::debug!("Layout function called");
         let mut display_list: Vec<DiscreteContent> = Vec::new();
         let mut cursor_x = H_STEP;
         let mut cursor_y = V_STEP;
@@ -223,126 +230,114 @@ impl Browser {
         display_list
     }
 
-    fn build_drawing_area() -> DrawingArea {
-        log::debug!("Creating Drawing Area");
+    fn render(&self, application: &gtk::Application) {
+        log::debug!("Rendering");
 
-        let drawing_area = DrawingArea::new();
-        drawing_area.set_content_width(WIDTH);
-        drawing_area.set_content_height(HEIGHT);
+        let content_clone = self.content.to_string();
+        let scroll_position_clone = self.scroll_position.clone();
 
-        drawing_area
+        drawable(application, WIDTH, HEIGHT, move |_, cr, width, height| {
+            // Set background color to white
+            cr.set_source_rgba(1.0, 1.0, 1.0, 1.0);
+
+            match cr.paint() {
+                Ok(_) => (),
+                Err(err) => log::error!("Error painting: {}", err),
+            }
+
+            log::debug!("Painted a white background");
+
+            let display_list = Self::layout(&content_clone, width);
+
+            Self::draw_to(display_list, scroll_position_clone, cr);
+        });
     }
 
-    fn build_window(app: &Application) -> ApplicationWindow {
-        log::debug!("Building UI");
-        let window = ApplicationWindow::new(app);
+    fn draw_to(display_list: Vec<DiscreteContent>, scroll_position: i32, context: &Context) {
+        log::debug!("Drawing to area");
+        context.select_font_face("Sans", FontSlant::Normal, FontWeight::Normal);
+        context.set_source_rgba(0.0, 0.0, 0.0, 1.0);
+        context.set_font_size(12.0);
 
-        // Create a window and set the title
-        window.set_title(Some("Bored Browser"));
-        window.set_default_width(WIDTH);
-        window.set_default_height(HEIGHT);
-
-        window
-    }
-
-    fn draw_to(area: &DrawingArea, display_list: Vec<DiscreteContent>, context: &cairo::Context) {
         for content in display_list {
-            // Create a Pango layout for the parsed content
-            let layout = area.create_pango_layout(Some(&content.content.to_string()));
+            context.move_to(
+                content.position.0,
+                content.position.1 - scroll_position as f64,
+            );
+            let text_rendering = context.show_text(&content.content.to_string());
 
-            // Set font
-            let font_desc = pango::FontDescription::from_string("Sans 14");
-            layout.set_font_description(Some(&font_desc));
-
-            // Set text color to black
-            context.set_source_rgba(0.0, 0.0, 0.0, 1.0);
-
-            // Position the text with some margin
-            context.move_to(content.position.0, content.position.1);
-
-            // Draw the layout
-            pangocairo::functions::show_layout(context, &layout);
-        }
-    }
-
-    fn handle_command_line(app: &Application, command_line: &ApplicationCommandLine) -> ExitCode {
-        let args = command_line.arguments();
-
-        match args.len() {
-            1 => {
-                println!("No URL provided");
-                return ExitCode::FAILURE;
-            }
-            _ => {
-                app.activate();
-                return ExitCode::SUCCESS;
+            match text_rendering {
+                Ok(_) => (),
+                Err(err) => log::error!("Error rendering text: {}", err),
             }
         }
     }
 
-    pub fn run(&mut self, url: String) {
-        let mut flags = gio::ApplicationFlags::empty();
-        flags.insert(gio::ApplicationFlags::HANDLES_COMMAND_LINE);
-        self.app.set_flags(flags);
-
-        self.app.connect_command_line(Self::handle_command_line);
-
+    pub fn run(&mut self, app: &gtk::Application, url: String) {
         self.load(url);
 
         log::debug!("Response Loaded");
 
-        let content = self.content.to_string();
-        self.app.connect_activate(move |app| {
-            log::debug!("Connection activated");
-            let window = Self::build_window(&app);
-
-            let drawing_area = Self::build_drawing_area();
-
-            let content_clone = content.clone();
-
-            drawing_area.set_draw_func(move |area, cr, width, height| {
-                // Set background color to white
-                cr.set_source_rgba(1.0, 1.0, 1.0, 1.0);
-                cr.paint().unwrap();
-
-                let display_list = Self::layout(&content_clone, width);
-
-                Self::draw_to(area, display_list, cr);
-            });
-
-            window.set_child(Some(&drawing_area));
-            // Present window
-            window.present();
-        });
-
-        self.app.run();
+        self.render(app);
     }
 }
 
 fn main() {
     log::set_logger(&CONSOLE_LOGGER).unwrap();
-    log::set_max_level(LevelFilter::Info);
-    let args: Vec<String> = env::args().collect();
+    log::set_max_level(LevelFilter::Debug);
 
-    let mut options = Options {
-        debug: false,
-        clear_cache: false,
-    };
+    let app = gtk::Application::new(Some(APP_ID), Default::default());
 
-    for argument in &args[1..] {
-        if argument == "--debug" {
-            options.debug = true;
-        } else if argument == "--clearCache" {
-            options.clear_cache = true;
-        }
-    }
+    let flags = gio::ApplicationFlags::empty();
+    // flags.insert(gio::ApplicationFlags::HANDLES_COMMAND_LINE);
 
-    if options.debug {
-        log::set_max_level(LevelFilter::Debug);
-        log::debug!("Debug Mode enabled");
-    } else {
-        log::set_max_level(LevelFilter::Info);
-    }
+    app.set_flags(flags);
 
-    Browser::new(options).run(args[1].clone());
+    app.connect_activate(|app| {
+        // app.connect_command_line(|app, command_line| {
+        let options = Options {
+            debug: true,
+            clear_cache: false,
+        };
+
+        //     let args = command_line.arguments();
+
+        //     for arg in args.iter().skip(1) {
+        //         let arg_str = arg.to_string_lossy();
+        //         if arg_str == DEBUG_STR {
+        //             options.debug = true;
+        //         } else if arg_str == CLEAR_CACHE_STR {
+        //             options.clear_cache = true;
+        //         }
+        //     }
+
+        //     if options.debug {
+        //         log::set_max_level(LevelFilter::Debug);
+        //         log::debug!("Debug Mode enabled");
+        //     } else {
+        //         log::set_max_level(LevelFilter::Info);
+        //     }
+
+        Browser::new(options).run(app, String::from("https://browser.engineering/http.html"));
+
+        // ExitCode::SUCCESS
+        // });
+    });
+
+    app.run();
+}
+
+pub fn drawable<F>(application: &gtk::Application, width: i32, height: i32, draw_fn: F)
+where
+    F: Fn(&DrawingArea, &Context, i32, i32) + 'static,
+{
+    let window = gtk::ApplicationWindow::new(application);
+    let drawing_area = Box::new(DrawingArea::new)();
+
+    drawing_area.set_draw_func(draw_fn);
+
+    window.set_default_size(width, height);
+
+    window.set_child(Some(&drawing_area));
+    window.present();
 }

@@ -17,6 +17,7 @@ struct Item {
     path_string: String,
 }
 
+#[derive(Clone)]
 pub struct Cache {
     items: Vec<Item>,
 }

@@ -134,6 +134,7 @@ pub struct RequestOptions {
     pub cache: Cache,
 }
 
+#[derive(Clone)]
 pub struct Request {
     cache: Cache,
 }
