@@ -5,13 +5,15 @@ use crate::uri::URI;
 
 use core::panic;
 use std::sync::OnceLock;
+use std::time::Duration;
 
 use gtk::cairo::{Context, FontSlant, FontWeight};
 use gtk::prelude::*;
-use gtk::{gdk, gio, glib};
+use gtk::{gdk, glib};
+use log::LevelFilter;
 use regex::Regex;
-use relm4::abstractions::{DrawContext, DrawHandler};
-use relm4::{gtk, Component, ComponentParts, ComponentSender, RelmApp, RelmWidgetExt};
+use relm4::abstractions::DrawHandler;
+use relm4::{gtk, tokio, Component, ComponentParts, ComponentSender, RelmApp, RelmWidgetExt};
 use std::collections::HashMap;
 use std::fs;
 
@@ -77,7 +79,7 @@ impl Browser {
             url: String::new(),
             request: requester,
             content: String::new(),
-            scroll_position: 0,
+            scroll_position: 300,
             draw_handler: DrawHandler::new(),
         }
     }
@@ -217,8 +219,6 @@ impl Browser {
 enum AppMsg {
     ScrollDown,
     ScrollUp,
-    Resize,
-    NewRequest,
     ContentParsed,
 }
 
@@ -235,6 +235,26 @@ impl Component for Browser {
     view! {
       gtk::Window {
         set_default_size: (600, 300),
+        add_controller = gtk::EventControllerKey {
+          connect_key_pressed[sender] => move |_, key, _, _| {
+              log::debug!("Key pressed");
+              match key {
+                  gdk::Key::Escape => {
+                      std::process::exit(0);
+                  }
+                  gdk::Key::Down => {
+                      log::debug!("Down key pressed");
+                      sender.input(AppMsg::ScrollDown);
+                  }
+                  gdk::Key::Up => {
+                      log::debug!("Up key pressed");
+                      sender.input(AppMsg::ScrollUp);
+                  }
+                  _ => (),
+              }
+              glib::Propagation::Proceed
+          }
+        },
 
         gtk::Box {
           set_orientation: gtk::Orientation::Vertical,
@@ -246,29 +266,6 @@ impl Component for Browser {
           area -> gtk::DrawingArea {
             set_vexpand: true,
             set_hexpand: true,
-
-            add_controller = gtk::EventControllerKey {
-              connect_key_pressed[sender] => move |_, key, _, _| {
-                  match key {
-                      gdk::Key::Escape => {
-                          std::process::exit(0);
-                      }
-                      gdk::Key::Down => {
-                          log::debug!("Down key pressed");
-                          sender.input(AppMsg::ScrollDown);
-                      }
-                      gdk::Key::Up => {
-                          log::debug!("Up key pressed");
-                          sender.input(AppMsg::ScrollUp);
-                      }
-                      _ => (),
-                  }
-                  glib::Propagation::Proceed
-              }
-            },
-            connect_resize[sender] => move |_, _, _| {
-                sender.input(AppMsg::Resize);
-            }
           },
         }
       }
@@ -284,17 +281,17 @@ impl Component for Browser {
         let area = model.draw_handler.drawing_area();
         let widgets = view_output!();
 
-        // sender.command(|out, shutdown| {
-        //     shutdown
-        //         .register(async move {
-        //             loop {
-        //                 tokio::time::sleep(Duration::from_millis(20)).await;
-        //                 out.send(UpdateRenderMsg).unwrap();
-        //             }
-        //         })
-        //         .drop_on_shutdown()
-        // });
-        //
+        sender.command(|out, shutdown| {
+            shutdown
+                .register(async move {
+                    loop {
+                        tokio::time::sleep(Duration::from_millis(20)).await;
+                        out.send(UpdateRenderMsg).unwrap();
+                    }
+                })
+                .drop_on_shutdown()
+        });
+
         model.run();
 
         sender.input(AppMsg::ContentParsed);
@@ -312,46 +309,21 @@ impl Component for Browser {
             AppMsg::ScrollUp => {
                 self.scroll_position = self.scroll_position.wrapping_sub(V_STEP as i32);
             }
-            AppMsg::Resize => {
-                self.width = self.draw_handler.width() as f64;
-                self.height = self.draw_handler.height() as f64;
-            }
             AppMsg::ContentParsed => {
                 self.content = self.content.clone();
             }
-            _ => (),
         }
 
         render(&cx, &self.content, self.scroll_position, self.width);
     }
 
     fn update_cmd(&mut self, _: UpdateRenderMsg, _: ComponentSender<Self>, _root: &Self::Root) {
-        // for point in &mut self.points {
-        //     let Point { x, y, .. } = point;
-        //     if *x < 0.0 {
-        //         point.xs = point.xs.abs();
-        //     } else if *x > self.width {
-        //         point.xs = -point.xs.abs();
-        //     }
-        //     *x = x.clamp(0.0, self.width);
-        //     *x += point.xs;
-
-        //     if *y < 0.0 {
-        //         point.ys = point.ys.abs();
-        //     } else if *y > self.height {
-        //         point.ys = -point.ys.abs();
-        //     }
-        //     *y = y.clamp(0.0, self.height);
-        //     *y += point.ys;
-        // }
-
         let cx = self.draw_handler.get_context();
         render(&cx, &self.content, self.scroll_position, self.width);
     }
 }
 
 fn layout(text: &str, window_width: f64) -> Vec<DiscreteContent> {
-    log::debug!("Layout function called");
     let mut display_list: Vec<DiscreteContent> = Vec::new();
     let mut cursor_x = H_STEP;
     let mut cursor_y = V_STEP;
@@ -386,7 +358,6 @@ fn layout(text: &str, window_width: f64) -> Vec<DiscreteContent> {
 }
 
 fn draw_to(display_list: Vec<DiscreteContent>, scroll_position: i32, context: &Context) {
-    log::debug!("Drawing to area");
     context.select_font_face("Sans", FontSlant::Normal, FontWeight::Normal);
     context.set_source_rgba(0.0, 0.0, 0.0, 1.0);
     context.set_font_size(12.0);
@@ -406,8 +377,6 @@ fn draw_to(display_list: Vec<DiscreteContent>, scroll_position: i32, context: &C
 }
 
 fn render(cx: &Context, content: &String, scroll_position: i32, window_width: f64) {
-    log::debug!("Rendering");
-
     let content_clone = content.to_string();
     let scroll_position_clone = scroll_position.clone();
 
@@ -418,14 +387,14 @@ fn render(cx: &Context, content: &String, scroll_position: i32, window_width: f6
         Err(err) => log::error!("Error painting: {}", err),
     }
 
-    log::debug!("Painted a white background");
-
     let display_list = layout(&content_clone, window_width);
 
     draw_to(display_list, scroll_position_clone, cx);
 }
 
 fn main() {
+    log::set_logger(&CONSOLE_LOGGER).unwrap();
+    log::set_max_level(LevelFilter::Debug);
     let application_opts = Options::default();
 
     APPLICATION_OPTS
