@@ -79,7 +79,7 @@ impl Browser {
             url: String::new(),
             request: requester,
             content: String::new(),
-            scroll_position: 300,
+            scroll_position: 0,
             draw_handler: DrawHandler::new(),
         }
     }
@@ -307,7 +307,9 @@ impl Component for Browser {
                 self.scroll_position = self.scroll_position.wrapping_add(V_STEP as i32);
             }
             AppMsg::ScrollUp => {
-                self.scroll_position = self.scroll_position.wrapping_sub(V_STEP as i32);
+                if self.scroll_position > 0 {
+                    self.scroll_position = self.scroll_position.wrapping_sub(V_STEP as i32);
+                }
             }
             AppMsg::ContentParsed => {
                 self.content = self.content.clone();
