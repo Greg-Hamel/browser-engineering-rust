@@ -51,6 +51,7 @@ struct Browser {
     url: String,
     request: Request,
     content: String,
+    display_list: Vec<DiscreteContent>,
     scroll_position: i32,
     draw_handler: DrawHandler,
 }
@@ -77,6 +78,7 @@ impl Browser {
             height: HEIGHT,
             width: WIDTH,
             url: String::new(),
+            display_list: Vec::new(),
             request: requester,
             content: String::new(),
             scroll_position: 0,
@@ -313,15 +315,16 @@ impl Component for Browser {
             }
             AppMsg::ContentParsed => {
                 self.content = self.content.clone();
+                self.display_list = layout(&self.content, self.width);
             }
         }
 
-        render(&cx, &self.content, self.scroll_position, self.width);
+        render(&cx, &self.display_list, self.scroll_position);
     }
 
     fn update_cmd(&mut self, _: UpdateRenderMsg, _: ComponentSender<Self>, _root: &Self::Root) {
         let cx = self.draw_handler.get_context();
-        render(&cx, &self.content, self.scroll_position, self.width);
+        render(&cx, &self.display_list, self.scroll_position);
     }
 }
 
@@ -359,7 +362,7 @@ fn layout(text: &str, window_width: f64) -> Vec<DiscreteContent> {
     display_list
 }
 
-fn draw_to(display_list: Vec<DiscreteContent>, scroll_position: i32, context: &Context) {
+fn draw_to(display_list: &Vec<DiscreteContent>, scroll_position: i32, context: &Context) {
     context.select_font_face("Sans", FontSlant::Normal, FontWeight::Normal);
     context.set_source_rgba(0.0, 0.0, 0.0, 1.0);
     context.set_font_size(12.0);
@@ -378,8 +381,7 @@ fn draw_to(display_list: Vec<DiscreteContent>, scroll_position: i32, context: &C
     }
 }
 
-fn render(cx: &Context, content: &String, scroll_position: i32, window_width: f64) {
-    let content_clone = content.to_string();
+fn render(cx: &Context, display_list: &Vec<DiscreteContent>, scroll_position: i32) {
     let scroll_position_clone = scroll_position.clone();
 
     cx.set_source_rgba(1.0, 1.0, 1.0, 1.0);
@@ -388,8 +390,6 @@ fn render(cx: &Context, content: &String, scroll_position: i32, window_width: f6
         Ok(_) => (),
         Err(err) => log::error!("Error painting: {}", err),
     }
-
-    let display_list = layout(&content_clone, window_width);
 
     draw_to(display_list, scroll_position_clone, cx);
 }
