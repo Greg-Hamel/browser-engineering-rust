@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 use sha2::{Digest, Sha256};
 
 use crate::request::{HTTPMethod, HTTPRequest};
+use crate::APPLICATION_OPTS;
 
 const CACHE_PATH: &str = ".cache/";
 
@@ -173,7 +174,7 @@ impl Cache {
         Self::write_to_cache_control(&self)
     }
 
-    pub fn initialize(clear_cache: bool) -> Cache {
+    pub fn initialize() -> Cache {
         let cache_path = Self::get_cache_path();
 
         if !cache_path.is_dir() {
@@ -181,8 +182,11 @@ impl Cache {
 
             return Self { items: vec![] };
         } else {
-            if clear_cache {
-                Self::clear()
+            let application_opts = APPLICATION_OPTS.get().expect("Could not get options");
+
+            match application_opts.clear_cache {
+                true => Self::clear(),
+                _ => (),
             }
 
             return Self {

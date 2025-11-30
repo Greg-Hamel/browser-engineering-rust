@@ -4,8 +4,8 @@ use crate::uri::Scheme;
 use crate::uri::URI;
 
 use core::panic;
-use gtk::gio::{Application, ApplicationCommandLine};
-use gtk::glib::ExitCode;
+use gtk::glib::{self};
+use std::sync::OnceLock;
 
 // use gio::prelude::*;
 use gtk::DrawingArea;
@@ -14,10 +14,8 @@ use gtk::cairo::{Context, FontSlant, FontWeight};
 use gtk::gio;
 use gtk::prelude::*;
 use log::LevelFilter;
-use pangocairo;
 use regex::Regex;
 use std::collections::HashMap;
-use std::env;
 use std::fs;
 
 pub mod cache;
@@ -27,13 +25,21 @@ pub mod uri;
 
 const APP_ID: &str = "com.greghamel.bored-browser";
 
-const DEBUG_STR: &str = "--debug";
-const CLEAR_CACHE_STR: &str = "--clear-cache";
-
+#[derive(Debug)]
 struct Options {
     debug: bool,
     clear_cache: bool,
 }
+
+impl Default for Options {
+    fn default() -> Self {
+        Options {
+            debug: false,
+            clear_cache: false,
+        }
+    }
+}
+
 #[derive(Clone)]
 struct DiscreteContent {
     content: String,
@@ -41,8 +47,6 @@ struct DiscreteContent {
 }
 
 struct Browser {
-    options: Options,
-    url: String,
     request: Request,
     content: String,
     scroll_position: i32,
@@ -54,9 +58,12 @@ const V_STEP: f64 = 18.0;
 const WIDTH: i32 = 600;
 const HEIGHT: i32 = 600;
 
+pub(crate) static APPLICATION_OPTS: OnceLock<Options> = OnceLock::new();
+pub(crate) static REQUEST_URL: OnceLock<String> = OnceLock::new();
+
 impl Browser {
-    pub fn new(options: Options) -> Self {
-        let cache = cache::Cache::initialize(options.clear_cache);
+    pub fn new() -> Self {
+        let cache = cache::Cache::initialize();
 
         let requester = Request::init(RequestOptions { cache });
         log::debug!("Request initialized");
@@ -64,8 +71,6 @@ impl Browser {
         log::debug!("Application initialized");
 
         Self {
-            options,
-            url: String::from(""),
             request: requester,
             content: String::new(),
             scroll_position: 100,
@@ -156,7 +161,7 @@ impl Browser {
         self.content = self.lex(source, only_body);
     }
 
-    fn load(&mut self, url: String) {
+    fn load(&mut self, url: &String) {
         let uri = URI::parse(&url);
 
         match uri.scheme {
@@ -273,8 +278,13 @@ impl Browser {
         }
     }
 
-    pub fn run(&mut self, app: &gtk::Application, url: String) {
-        self.load(url);
+    pub fn run(&mut self, app: &gtk::Application) {
+        let flags = gio::ApplicationFlags::empty();
+        // flags.insert(gio::ApplicationFlags::HANDLES_COMMAND_LINE);
+
+        app.set_flags(flags);
+
+        self.load(REQUEST_URL.get().expect("REQUEST_URL must be set"));
 
         log::debug!("Response Loaded");
 
@@ -286,42 +296,44 @@ fn main() {
     log::set_logger(&CONSOLE_LOGGER).unwrap();
     log::set_max_level(LevelFilter::Debug);
 
-    let app = gtk::Application::new(Some(APP_ID), Default::default());
+    let app = setup_cli(gtk::Application::new(Some(APP_ID), Default::default()));
 
-    let flags = gio::ApplicationFlags::empty();
-    // flags.insert(gio::ApplicationFlags::HANDLES_COMMAND_LINE);
+    let mut flags = gio::ApplicationFlags::empty();
+    flags.insert(gio::ApplicationFlags::HANDLES_OPEN);
 
     app.set_flags(flags);
 
-    app.connect_activate(|app| {
-        // app.connect_command_line(|app, command_line| {
-        let options = Options {
-            debug: true,
-            clear_cache: false,
-        };
+    app.connect_handle_local_options(|_, dict| {
+        let mut application_opts = Options::default();
 
-        //     let args = command_line.arguments();
+        if dict.contains("debug") {
+            application_opts.debug = true;
+        }
 
-        //     for arg in args.iter().skip(1) {
-        //         let arg_str = arg.to_string_lossy();
-        //         if arg_str == DEBUG_STR {
-        //             options.debug = true;
-        //         } else if arg_str == CLEAR_CACHE_STR {
-        //             options.clear_cache = true;
-        //         }
-        //     }
+        if dict.contains("clear_cache") {
+            application_opts.clear_cache = true;
+        }
 
-        //     if options.debug {
-        //         log::set_max_level(LevelFilter::Debug);
-        //         log::debug!("Debug Mode enabled");
-        //     } else {
-        //         log::set_max_level(LevelFilter::Info);
-        //     }
+        APPLICATION_OPTS
+            .set(application_opts)
+            .expect("Failed to set application options, already initialized");
 
-        Browser::new(options).run(app, String::from("https://browser.engineering/http.html"));
+        std::ops::ControlFlow::Continue(())
+    });
 
-        // ExitCode::SUCCESS
-        // });
+    app.connect_open(|app, files, _| {
+        match files.len() {
+            0 => panic!("No url provided"),
+            1 => log::debug!("Opening url: {}", &files[0].uri()),
+            _ => panic!("Cannot open multiple urls"),
+        }
+
+        REQUEST_URL
+            .set(files[0].uri().to_string())
+            .expect("Failed to set request url, already initialized.");
+
+        let mut browser = Browser::new();
+        browser.run(app);
     });
 
     app.run();
@@ -340,4 +352,26 @@ where
 
     window.set_child(Some(&drawing_area));
     window.present();
+}
+
+fn setup_cli<A: IsA<gio::Application>>(app: A) -> A {
+    app.add_main_option(
+        "debug",
+        glib::Char::from(b'd'),
+        glib::OptionFlags::NONE,
+        glib::OptionArg::None,
+        "Show debug",
+        Some("Show debug"),
+    );
+
+    app.add_main_option(
+        "clear-cache",
+        glib::Char::from(b'c'),
+        glib::OptionFlags::NONE,
+        glib::OptionArg::None,
+        "Clear cache",
+        Some("Clear cache"),
+    );
+
+    app
 }
