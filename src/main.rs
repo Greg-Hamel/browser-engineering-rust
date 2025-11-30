@@ -222,6 +222,7 @@ enum AppMsg {
     ScrollDown,
     ScrollUp,
     ContentParsed,
+    Resize,
 }
 
 #[derive(Debug)]
@@ -268,6 +269,17 @@ impl Component for Browser {
           area -> gtk::DrawingArea {
             set_vexpand: true,
             set_hexpand: true,
+
+            add_controller = gtk::GestureClick {
+                set_button: 0,
+                connect_pressed[sender] => move |controller, _, x, y| {
+                    log::debug!("Add point at ({}, {})", x, y);
+                }
+            },
+            connect_resize[sender] => move |_, _, _| {
+                log::debug!("Resize event");
+                sender.input(AppMsg::Resize);
+            }
           },
         }
       }
@@ -317,14 +329,19 @@ impl Component for Browser {
                 self.content = self.content.clone();
                 self.display_list = layout(&self.content, self.width);
             }
+            AppMsg::Resize => {
+                self.width = self.draw_handler.width() as f64;
+                self.height = self.draw_handler.height() as f64;
+                self.display_list = layout(&self.content, self.width);
+            }
         }
 
-        render(&cx, &self.display_list, self.scroll_position);
+        render(&cx, &self.display_list, self.scroll_position, self.height);
     }
 
     fn update_cmd(&mut self, _: UpdateRenderMsg, _: ComponentSender<Self>, _root: &Self::Root) {
         let cx = self.draw_handler.get_context();
-        render(&cx, &self.display_list, self.scroll_position);
+        render(&cx, &self.display_list, self.scroll_position, self.height);
     }
 }
 
@@ -362,12 +379,24 @@ fn layout(text: &str, window_width: f64) -> Vec<DiscreteContent> {
     display_list
 }
 
-fn draw_to(display_list: &Vec<DiscreteContent>, scroll_position: i32, context: &Context) {
+fn draw_to(
+    display_list: &Vec<DiscreteContent>,
+    scroll_position: i32,
+    context: &Context,
+    window_height: f64,
+) {
     context.select_font_face("Sans", FontSlant::Normal, FontWeight::Normal);
     context.set_source_rgba(0.0, 0.0, 0.0, 1.0);
     context.set_font_size(12.0);
 
     for content in display_list {
+        // Don't draw content that is off-screen
+        if content.position.1 < scroll_position as f64
+            || content.position.1 > scroll_position as f64 + window_height
+        {
+            continue;
+        }
+
         context.move_to(
             content.position.0,
             content.position.1 - scroll_position as f64,
@@ -381,7 +410,12 @@ fn draw_to(display_list: &Vec<DiscreteContent>, scroll_position: i32, context: &
     }
 }
 
-fn render(cx: &Context, display_list: &Vec<DiscreteContent>, scroll_position: i32) {
+fn render(
+    cx: &Context,
+    display_list: &Vec<DiscreteContent>,
+    scroll_position: i32,
+    window_height: f64,
+) {
     let scroll_position_clone = scroll_position.clone();
 
     cx.set_source_rgba(1.0, 1.0, 1.0, 1.0);
@@ -391,7 +425,7 @@ fn render(cx: &Context, display_list: &Vec<DiscreteContent>, scroll_position: i3
         Err(err) => log::error!("Error painting: {}", err),
     }
 
-    draw_to(display_list, scroll_position_clone, cx);
+    draw_to(display_list, scroll_position_clone, cx, window_height);
 }
 
 fn main() {
