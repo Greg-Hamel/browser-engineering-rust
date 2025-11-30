@@ -4,17 +4,14 @@ use crate::uri::Scheme;
 use crate::uri::URI;
 
 use core::panic;
-use gtk::glib::{self};
 use std::sync::OnceLock;
 
-// use gio::prelude::*;
-use gtk::DrawingArea;
-
 use gtk::cairo::{Context, FontSlant, FontWeight};
-use gtk::gio;
 use gtk::prelude::*;
-use log::LevelFilter;
+use gtk::{gdk, gio, glib};
 use regex::Regex;
+use relm4::abstractions::{DrawContext, DrawHandler};
+use relm4::{gtk, Component, ComponentParts, ComponentSender, RelmApp, RelmWidgetExt};
 use std::collections::HashMap;
 use std::fs;
 
@@ -47,16 +44,20 @@ struct DiscreteContent {
 }
 
 struct Browser {
+    width: f64,
+    height: f64,
+    url: String,
     request: Request,
     content: String,
     scroll_position: i32,
+    draw_handler: DrawHandler,
 }
 
 const H_STEP: f64 = 13.0;
 const V_STEP: f64 = 18.0;
 
-const WIDTH: i32 = 600;
-const HEIGHT: i32 = 600;
+const WIDTH: f64 = 600.0;
+const HEIGHT: f64 = 600.0;
 
 pub(crate) static APPLICATION_OPTS: OnceLock<Options> = OnceLock::new();
 pub(crate) static REQUEST_URL: OnceLock<String> = OnceLock::new();
@@ -71,13 +72,17 @@ impl Browser {
         log::debug!("Application initialized");
 
         Self {
+            height: HEIGHT,
+            width: WIDTH,
+            url: String::new(),
             request: requester,
             content: String::new(),
-            scroll_position: 100,
+            scroll_position: 0,
+            draw_handler: DrawHandler::new(),
         }
     }
 
-    fn transform(&mut self, data: &str) -> String {
+    fn transform(data: &str) -> String {
         let lt_re = Regex::new(r"<").unwrap();
         let gt_re = Regex::new(r">").unwrap();
 
@@ -161,7 +166,7 @@ impl Browser {
         self.content = self.lex(source, only_body);
     }
 
-    fn load(&mut self, url: &String) {
+    fn load(&mut self, url: String) {
         let uri = URI::parse(&url);
 
         match uri.scheme {
@@ -173,7 +178,7 @@ impl Browser {
 
                 if uri.flags.contains_key(&String::from("view-source")) {
                     log::debug!("View-source flag found");
-                    let transformed_response = self.transform(&response.data.as_str());
+                    let transformed_response = Browser::transform(&response.data.as_str());
                     self.show(&transformed_response, false)
                 } else {
                     log::debug!("Rendering response");
@@ -200,178 +205,233 @@ impl Browser {
         }
     }
 
-    fn layout(text: &str, window_width: i32) -> Vec<DiscreteContent> {
-        log::debug!("Layout function called");
-        let mut display_list: Vec<DiscreteContent> = Vec::new();
-        let mut cursor_x = H_STEP;
-        let mut cursor_y = V_STEP;
+    pub fn run(&mut self) {
+        // self.load(REQUEST_URL.get().expect("REQUEST_URL must be set"));
+        self.load(String::from("https://browser.engineering/http.html"));
 
-        let characters = text.chars();
+        log::debug!("Response Loaded");
+    }
+}
 
-        for content in characters {
-            let discrete_content = DiscreteContent {
-                content: content.to_string(),
-                position: (cursor_x, cursor_y),
-            };
+#[derive(Debug)]
+enum AppMsg {
+    ScrollDown,
+    ScrollUp,
+    Resize,
+    NewRequest,
+    ContentParsed,
+}
 
-            display_list.push(discrete_content);
+#[derive(Debug)]
+struct UpdateRenderMsg;
 
-            match content {
-                '\n' => {
-                    cursor_x = H_STEP;
-                    cursor_y += V_STEP;
-                }
-                _ => {
-                    cursor_x += H_STEP;
-                }
+#[relm4::component]
+impl Component for Browser {
+    type Input = AppMsg;
+    type Output = ();
+    type Init = ();
+    type CommandOutput = UpdateRenderMsg;
+
+    view! {
+      gtk::Window {
+        set_default_size: (600, 300),
+
+        gtk::Box {
+          set_orientation: gtk::Orientation::Vertical,
+          set_margin_all: 10,
+          set_spacing: 10,
+          set_hexpand: true,
+
+          #[local_ref]
+          area -> gtk::DrawingArea {
+            set_vexpand: true,
+            set_hexpand: true,
+
+            add_controller = gtk::EventControllerKey {
+              connect_key_pressed[sender] => move |_, key, _, _| {
+                  match key {
+                      gdk::Key::Escape => {
+                          std::process::exit(0);
+                      }
+                      gdk::Key::Down => {
+                          log::debug!("Down key pressed");
+                          sender.input(AppMsg::ScrollDown);
+                      }
+                      gdk::Key::Up => {
+                          log::debug!("Up key pressed");
+                          sender.input(AppMsg::ScrollUp);
+                      }
+                      _ => (),
+                  }
+                  glib::Propagation::Proceed
+              }
+            },
+            connect_resize[sender] => move |_, _, _| {
+                sender.input(AppMsg::Resize);
             }
+          },
+        }
+      }
+    }
 
-            if cursor_x as i32 >= window_width {
+    fn init(
+        _: Self::Init,
+        root: Self::Root,
+        sender: ComponentSender<Self>,
+    ) -> ComponentParts<Self> {
+        let mut model = Browser::new();
+
+        let area = model.draw_handler.drawing_area();
+        let widgets = view_output!();
+
+        // sender.command(|out, shutdown| {
+        //     shutdown
+        //         .register(async move {
+        //             loop {
+        //                 tokio::time::sleep(Duration::from_millis(20)).await;
+        //                 out.send(UpdateRenderMsg).unwrap();
+        //             }
+        //         })
+        //         .drop_on_shutdown()
+        // });
+        //
+        model.run();
+
+        sender.input(AppMsg::ContentParsed);
+
+        ComponentParts { model, widgets }
+    }
+
+    fn update(&mut self, message: AppMsg, _sender: ComponentSender<Self>, _root: &Self::Root) {
+        let cx = self.draw_handler.get_context();
+
+        match message {
+            AppMsg::ScrollDown => {
+                self.scroll_position = self.scroll_position.wrapping_add(V_STEP as i32);
+            }
+            AppMsg::ScrollUp => {
+                self.scroll_position = self.scroll_position.wrapping_sub(V_STEP as i32);
+            }
+            AppMsg::Resize => {
+                self.width = self.draw_handler.width() as f64;
+                self.height = self.draw_handler.height() as f64;
+            }
+            AppMsg::ContentParsed => {
+                self.content = self.content.clone();
+            }
+            _ => (),
+        }
+
+        render(&cx, &self.content, self.scroll_position, self.width);
+    }
+
+    fn update_cmd(&mut self, _: UpdateRenderMsg, _: ComponentSender<Self>, _root: &Self::Root) {
+        // for point in &mut self.points {
+        //     let Point { x, y, .. } = point;
+        //     if *x < 0.0 {
+        //         point.xs = point.xs.abs();
+        //     } else if *x > self.width {
+        //         point.xs = -point.xs.abs();
+        //     }
+        //     *x = x.clamp(0.0, self.width);
+        //     *x += point.xs;
+
+        //     if *y < 0.0 {
+        //         point.ys = point.ys.abs();
+        //     } else if *y > self.height {
+        //         point.ys = -point.ys.abs();
+        //     }
+        //     *y = y.clamp(0.0, self.height);
+        //     *y += point.ys;
+        // }
+
+        let cx = self.draw_handler.get_context();
+        render(&cx, &self.content, self.scroll_position, self.width);
+    }
+}
+
+fn layout(text: &str, window_width: f64) -> Vec<DiscreteContent> {
+    log::debug!("Layout function called");
+    let mut display_list: Vec<DiscreteContent> = Vec::new();
+    let mut cursor_x = H_STEP;
+    let mut cursor_y = V_STEP;
+
+    let characters = text.chars();
+
+    for content in characters {
+        let discrete_content = DiscreteContent {
+            content: content.to_string(),
+            position: (cursor_x, cursor_y),
+        };
+
+        display_list.push(discrete_content);
+
+        match content {
+            '\n' => {
                 cursor_x = H_STEP;
                 cursor_y += V_STEP;
             }
+            _ => {
+                cursor_x += H_STEP;
+            }
         }
 
-        display_list
-    }
-
-    fn render(&self, application: &gtk::Application) {
-        log::debug!("Rendering");
-
-        let content_clone = self.content.to_string();
-        let scroll_position_clone = self.scroll_position.clone();
-
-        drawable(application, WIDTH, HEIGHT, move |_, cr, width, height| {
-            // Set background color to white
-            cr.set_source_rgba(1.0, 1.0, 1.0, 1.0);
-
-            match cr.paint() {
-                Ok(_) => (),
-                Err(err) => log::error!("Error painting: {}", err),
-            }
-
-            log::debug!("Painted a white background");
-
-            let display_list = Self::layout(&content_clone, width);
-
-            Self::draw_to(display_list, scroll_position_clone, cr);
-        });
-    }
-
-    fn draw_to(display_list: Vec<DiscreteContent>, scroll_position: i32, context: &Context) {
-        log::debug!("Drawing to area");
-        context.select_font_face("Sans", FontSlant::Normal, FontWeight::Normal);
-        context.set_source_rgba(0.0, 0.0, 0.0, 1.0);
-        context.set_font_size(12.0);
-
-        for content in display_list {
-            context.move_to(
-                content.position.0,
-                content.position.1 - scroll_position as f64,
-            );
-            let text_rendering = context.show_text(&content.content.to_string());
-
-            match text_rendering {
-                Ok(_) => (),
-                Err(err) => log::error!("Error rendering text: {}", err),
-            }
+        if cursor_x >= window_width {
+            cursor_x = H_STEP;
+            cursor_y += V_STEP;
         }
     }
 
-    pub fn run(&mut self, app: &gtk::Application) {
-        let flags = gio::ApplicationFlags::empty();
-        // flags.insert(gio::ApplicationFlags::HANDLES_COMMAND_LINE);
+    display_list
+}
 
-        app.set_flags(flags);
+fn draw_to(display_list: Vec<DiscreteContent>, scroll_position: i32, context: &Context) {
+    log::debug!("Drawing to area");
+    context.select_font_face("Sans", FontSlant::Normal, FontWeight::Normal);
+    context.set_source_rgba(0.0, 0.0, 0.0, 1.0);
+    context.set_font_size(12.0);
 
-        self.load(REQUEST_URL.get().expect("REQUEST_URL must be set"));
+    for content in display_list {
+        context.move_to(
+            content.position.0,
+            content.position.1 - scroll_position as f64,
+        );
+        let text_rendering = context.show_text(&content.content.to_string());
 
-        log::debug!("Response Loaded");
-
-        self.render(app);
+        match text_rendering {
+            Ok(_) => (),
+            Err(err) => log::error!("Error rendering text: {}", err),
+        }
     }
+}
+
+fn render(cx: &Context, content: &String, scroll_position: i32, window_width: f64) {
+    log::debug!("Rendering");
+
+    let content_clone = content.to_string();
+    let scroll_position_clone = scroll_position.clone();
+
+    cx.set_source_rgba(1.0, 1.0, 1.0, 1.0);
+
+    match cx.paint() {
+        Ok(_) => (),
+        Err(err) => log::error!("Error painting: {}", err),
+    }
+
+    log::debug!("Painted a white background");
+
+    let display_list = layout(&content_clone, window_width);
+
+    draw_to(display_list, scroll_position_clone, cx);
 }
 
 fn main() {
-    log::set_logger(&CONSOLE_LOGGER).unwrap();
-    log::set_max_level(LevelFilter::Debug);
+    let application_opts = Options::default();
 
-    let app = setup_cli(gtk::Application::new(Some(APP_ID), Default::default()));
+    APPLICATION_OPTS
+        .set(application_opts)
+        .expect("Failed to set application options, already initialized");
 
-    let mut flags = gio::ApplicationFlags::empty();
-    flags.insert(gio::ApplicationFlags::HANDLES_OPEN);
-
-    app.set_flags(flags);
-
-    app.connect_handle_local_options(|_, dict| {
-        let mut application_opts = Options::default();
-
-        if dict.contains("debug") {
-            application_opts.debug = true;
-        }
-
-        if dict.contains("clear_cache") {
-            application_opts.clear_cache = true;
-        }
-
-        APPLICATION_OPTS
-            .set(application_opts)
-            .expect("Failed to set application options, already initialized");
-
-        std::ops::ControlFlow::Continue(())
-    });
-
-    app.connect_open(|app, files, _| {
-        match files.len() {
-            0 => panic!("No url provided"),
-            1 => log::debug!("Opening url: {}", &files[0].uri()),
-            _ => panic!("Cannot open multiple urls"),
-        }
-
-        REQUEST_URL
-            .set(files[0].uri().to_string())
-            .expect("Failed to set request url, already initialized.");
-
-        let mut browser = Browser::new();
-        browser.run(app);
-    });
-
-    app.run();
-}
-
-pub fn drawable<F>(application: &gtk::Application, width: i32, height: i32, draw_fn: F)
-where
-    F: Fn(&DrawingArea, &Context, i32, i32) + 'static,
-{
-    let window = gtk::ApplicationWindow::new(application);
-    let drawing_area = Box::new(DrawingArea::new)();
-
-    drawing_area.set_draw_func(draw_fn);
-
-    window.set_default_size(width, height);
-
-    window.set_child(Some(&drawing_area));
-    window.present();
-}
-
-fn setup_cli<A: IsA<gio::Application>>(app: A) -> A {
-    app.add_main_option(
-        "debug",
-        glib::Char::from(b'd'),
-        glib::OptionFlags::NONE,
-        glib::OptionArg::None,
-        "Show debug",
-        Some("Show debug"),
-    );
-
-    app.add_main_option(
-        "clear-cache",
-        glib::Char::from(b'c'),
-        glib::OptionFlags::NONE,
-        glib::OptionArg::None,
-        "Clear cache",
-        Some("Clear cache"),
-    );
-
-    app
+    let app = RelmApp::new(APP_ID);
+    app.run::<Browser>(());
 }
