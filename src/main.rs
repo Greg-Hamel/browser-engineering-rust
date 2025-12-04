@@ -219,8 +219,9 @@ impl Browser {
 
 #[derive(Debug)]
 enum AppMsg {
-    ScrollDown,
-    ScrollUp,
+    KBScrollDown,
+    KBScrollUp,
+    MouseScroll((f64, f64)),
     ContentParsed,
     Resize,
 }
@@ -243,20 +244,31 @@ impl Component for Browser {
               log::debug!("Key pressed");
               match key {
                   gdk::Key::Escape => {
+                      log::info!("Esc Key registered, exiting...");
                       std::process::exit(0);
                   }
                   gdk::Key::Down => {
                       log::debug!("Down key pressed");
-                      sender.input(AppMsg::ScrollDown);
+                      sender.input(AppMsg::KBScrollDown);
                   }
                   gdk::Key::Up => {
                       log::debug!("Up key pressed");
-                      sender.input(AppMsg::ScrollUp);
+                      sender.input(AppMsg::KBScrollUp);
                   }
                   _ => (),
               }
               glib::Propagation::Proceed
-          }
+          },
+        },
+
+        add_controller = gtk::EventControllerScroll {
+            set_flags: gtk::EventControllerScrollFlags::VERTICAL,
+
+            connect_scroll[sender] => move |_, dx, dy| {
+                log::debug!("Scroll event");
+                sender.input(AppMsg::MouseScroll((dx, dy)));
+                glib::Propagation::Proceed
+            }
         },
 
         gtk::Box {
@@ -317,10 +329,10 @@ impl Component for Browser {
         let cx = self.draw_handler.get_context();
 
         match message {
-            AppMsg::ScrollDown => {
+            AppMsg::KBScrollDown => {
                 self.scroll_position = self.scroll_position.wrapping_add(V_STEP as i32);
             }
-            AppMsg::ScrollUp => {
+            AppMsg::KBScrollUp => {
                 if self.scroll_position > 0 {
                     self.scroll_position = self.scroll_position.wrapping_sub(V_STEP as i32);
                 }
@@ -333,6 +345,17 @@ impl Component for Browser {
                 self.width = self.draw_handler.width() as f64;
                 self.height = self.draw_handler.height() as f64;
                 self.display_list = layout(&self.content, self.width);
+            }
+            AppMsg::MouseScroll((dx, dy)) => {
+                let scroll_distance = 120.0 * dy;
+
+                if self.scroll_position + scroll_distance as i32 > 0
+                    && self.display_list.last().unwrap().position.1
+                        > self.scroll_position as f64 + scroll_distance + self.height
+                {
+                    self.scroll_position =
+                        self.scroll_position.wrapping_add(scroll_distance as i32);
+                }
             }
         }
 
