@@ -265,7 +265,6 @@ impl Component for Browser {
             set_flags: gtk::EventControllerScrollFlags::VERTICAL,
 
             connect_scroll[sender] => move |_, dx, dy| {
-                log::debug!("Scroll event");
                 sender.input(AppMsg::MouseScroll((dx, dy)));
                 glib::Propagation::Proceed
             }
@@ -283,10 +282,6 @@ impl Component for Browser {
             set_hexpand: true,
 
             add_controller = gtk::GestureClick {
-                set_button: 0,
-                connect_pressed[sender] => move |controller, _, x, y| {
-                    log::debug!("Add point at ({}, {})", x, y);
-                }
             },
             connect_resize[sender] => move |_, _, _| {
                 log::debug!("Resize event");
@@ -347,7 +342,7 @@ impl Component for Browser {
                 self.display_list = layout(&self.content, self.width);
             }
             AppMsg::MouseScroll((dx, dy)) => {
-                let scroll_distance = 120.0 * dy;
+                let scroll_distance = 10.0 * dy;
 
                 if self.scroll_position + scroll_distance as i32 > 0
                     && self.display_list.last().unwrap().position.1
@@ -355,16 +350,35 @@ impl Component for Browser {
                 {
                     self.scroll_position =
                         self.scroll_position.wrapping_add(scroll_distance as i32);
+                } else if (self.scroll_position + scroll_distance as i32) < 0 {
+                    self.scroll_position = 0;
+                } else if self.scroll_position + scroll_distance as i32
+                    > self.display_list.last().unwrap().position.1 as i32
+                {
+                    self.scroll_position =
+                        self.display_list.last().unwrap().position.1 as i32 - self.height as i32;
                 }
             }
         }
 
-        render(&cx, &self.display_list, self.scroll_position, self.height);
+        render(
+            &cx,
+            &self.display_list,
+            self.scroll_position,
+            self.height,
+            self.width,
+        );
     }
 
     fn update_cmd(&mut self, _: UpdateRenderMsg, _: ComponentSender<Self>, _root: &Self::Root) {
         let cx = self.draw_handler.get_context();
-        render(&cx, &self.display_list, self.scroll_position, self.height);
+        render(
+            &cx,
+            &self.display_list,
+            self.scroll_position,
+            self.height,
+            self.width,
+        );
     }
 }
 
@@ -433,11 +447,40 @@ fn draw_to(
     }
 }
 
+fn draw_scrollbar(
+    cx: &Context,
+    height: f64,
+    width: f64,
+    content_height: f64,
+    scroll_position: f64,
+) {
+    let scrollbar_height = height * height / content_height;
+    let scrollbar_y = scroll_position * height / content_height;
+    let scrollbar_width = 10.0;
+
+    cx.set_source_rgb(0.5, 0.5, 0.5);
+    cx.rectangle(
+        width - scrollbar_width,
+        scrollbar_y,
+        scrollbar_width,
+        scrollbar_height,
+    );
+    cx.fill().expect("Couldn't fill scrollbar");
+}
+
+fn get_content_height(display_list: &Vec<DiscreteContent>) -> f64 {
+    return match display_list.last() {
+        Some(content) => content.position.1,
+        None => 0.0,
+    };
+}
+
 fn render(
     cx: &Context,
     display_list: &Vec<DiscreteContent>,
     scroll_position: i32,
     window_height: f64,
+    window_width: f64,
 ) {
     let scroll_position_clone = scroll_position.clone();
 
@@ -449,6 +492,13 @@ fn render(
     }
 
     draw_to(display_list, scroll_position_clone, cx, window_height);
+    draw_scrollbar(
+        cx,
+        window_height,
+        window_width,
+        get_content_height(display_list),
+        scroll_position as f64,
+    );
 }
 
 fn main() {
