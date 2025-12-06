@@ -90,25 +90,7 @@ impl Layout {
                         display_list.push(discrete_content);
                     }
                 }
-                Element::Tag(tag) => {
-                    match tag.as_str() {
-                        "i" | "em" => {
-                            self.font_slant = FontSlant::Italic;
-                        }
-                        "/i" | "/em" => {
-                            self.font_slant = FontSlant::Normal;
-                        }
-                        "b" | "strong" => {
-                            self.font_weight = FontWeight::Bold;
-                        }
-                        "/b" | "/strong" => {
-                            self.font_weight = FontWeight::Normal;
-                        }
-                        _ => {
-                            // Handle unknown tag
-                        }
-                    }
-                }
+                Element::Tag(tag) => self.token(tag),
             }
         }
 
@@ -117,6 +99,26 @@ impl Layout {
 
     fn get_space_width(&self, context: &Context) -> f64 {
         context.text_extents(" ").unwrap().x_advance()
+    }
+
+    fn token(&mut self, token: &String) {
+        match token.as_str() {
+            "i" | "em" => {
+                self.font_slant = FontSlant::Italic;
+            }
+            "/i" | "/em" => {
+                self.font_slant = FontSlant::Normal;
+            }
+            "b" | "strong" => {
+                self.font_weight = FontWeight::Bold;
+            }
+            "/b" | "/strong" => {
+                self.font_weight = FontWeight::Normal;
+            }
+            _ => {
+                // Handle unknown tag
+            }
+        }
     }
 
     fn word(&mut self, context: &Context, word: &str) -> DiscreteContent {
