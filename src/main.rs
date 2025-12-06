@@ -43,6 +43,7 @@ impl Default for Options {
 struct DiscreteContent {
     content: String,
     position: (f64, f64),
+    width: f64,
 }
 
 struct Browser {
@@ -272,8 +273,8 @@ impl Component for Browser {
 
         gtk::Box {
           set_orientation: gtk::Orientation::Vertical,
-          set_margin_all: 10,
-          set_spacing: 10,
+          // set_margin_all: 10,
+          // set_spacing: 10,
           set_hexpand: true,
 
           #[local_ref]
@@ -334,14 +335,14 @@ impl Component for Browser {
             }
             AppMsg::ContentParsed => {
                 self.content = self.content.clone();
-                self.display_list = layout(&self.content, self.width);
+                self.display_list = layout(&cx, &self.content, self.width);
             }
             AppMsg::Resize => {
                 self.width = self.draw_handler.width() as f64;
                 self.height = self.draw_handler.height() as f64;
-                self.display_list = layout(&self.content, self.width);
+                self.display_list = layout(&cx, &self.content, self.width);
             }
-            AppMsg::MouseScroll((dx, dy)) => {
+            AppMsg::MouseScroll((_, dy)) => {
                 let scroll_distance = 10.0 * dy;
 
                 if self.scroll_position + scroll_distance as i32 > 0
@@ -382,49 +383,54 @@ impl Component for Browser {
     }
 }
 
-fn layout(text: &str, window_width: f64) -> Vec<DiscreteContent> {
+fn layout(context: &Context, text: &str, window_width: f64) -> Vec<DiscreteContent> {
+    context.select_font_face("Sans", FontSlant::Normal, FontWeight::Normal);
+    context.set_font_size(12.0);
+
+    let word_height = context.font_extents().unwrap().height();
     let mut display_list: Vec<DiscreteContent> = Vec::new();
     let mut cursor_x = H_STEP;
-    let mut cursor_y = V_STEP;
+    let mut cursor_y = word_height;
 
-    let characters = text.chars();
+    let space_width = context.text_extents(" ").unwrap().x_advance();
 
-    for content in characters {
+    let words = text.split_ascii_whitespace();
+
+    for content in words {
+        let word_width = context.text_extents(content).unwrap().x_advance();
+
         let discrete_content = DiscreteContent {
             content: content.to_string(),
             position: (cursor_x, cursor_y),
+            width: word_width,
         };
 
         display_list.push(discrete_content);
 
         match content {
-            '\n' => {
-                cursor_x = H_STEP;
-                cursor_y += V_STEP;
-            }
             _ => {
-                cursor_x += H_STEP;
+                cursor_x += word_width + space_width;
             }
         }
 
-        if cursor_x >= window_width {
+        if cursor_x + word_width >= window_width - H_STEP {
             cursor_x = H_STEP;
-            cursor_y += V_STEP;
+            cursor_y += word_height * 1.25;
         }
     }
 
     display_list
 }
 
-fn draw_to(
+fn draw_content(
     display_list: &Vec<DiscreteContent>,
     scroll_position: i32,
     context: &Context,
     window_height: f64,
 ) {
     context.select_font_face("Sans", FontSlant::Normal, FontWeight::Normal);
-    context.set_source_rgba(0.0, 0.0, 0.0, 1.0);
     context.set_font_size(12.0);
+    context.set_source_rgba(0.0, 0.0, 0.0, 1.0);
 
     for content in display_list {
         // Don't draw content that is off-screen
@@ -491,7 +497,7 @@ fn render(
         Err(err) => log::error!("Error painting: {}", err),
     }
 
-    draw_to(display_list, scroll_position_clone, cx, window_height);
+    draw_content(display_list, scroll_position_clone, cx, window_height);
     draw_scrollbar(
         cx,
         window_height,
