@@ -38,6 +38,17 @@ impl Default for Options {
         }
     }
 }
+
+const DEFAULT_FONT_SIZE: f64 = 12.0;
+const DEFAULT_FONT_FAMILY: &str = "Sans";
+const DEFAULT_FONT_SLANT: FontSlant = FontSlant::Normal;
+const DEFAULT_FONT_WEIGHT: FontWeight = FontWeight::Normal;
+
+fn set_font_defaults(context: &Context) {
+    context.select_font_face(DEFAULT_FONT_FAMILY, DEFAULT_FONT_SLANT, DEFAULT_FONT_WEIGHT);
+    context.set_font_size(DEFAULT_FONT_SIZE);
+}
+
 #[derive(Clone)]
 struct Position(f64, f64);
 
@@ -385,8 +396,7 @@ impl Component for Browser {
 }
 
 fn layout(context: &Context, text: &str, window_width: f64) -> Vec<DiscreteContent> {
-    context.select_font_face("Sans", FontSlant::Normal, FontWeight::Normal);
-    context.set_font_size(12.0);
+    set_font_defaults(context);
 
     let word_height = context.font_extents().unwrap().height();
     let mut display_list: Vec<DiscreteContent> = Vec::new();
@@ -428,8 +438,7 @@ fn draw_content(
     context: &Context,
     window_height: f64,
 ) {
-    context.select_font_face("Sans", FontSlant::Normal, FontWeight::Normal);
-    context.set_font_size(12.0);
+    set_font_defaults(context);
     context.set_source_rgba(0.0, 0.0, 0.0, 1.0);
 
     for content in display_list {
