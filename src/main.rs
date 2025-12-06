@@ -50,6 +50,12 @@ fn set_font_defaults(context: &Context) {
 }
 
 #[derive(Clone)]
+enum Element {
+    Tag(String),
+    Text(String),
+}
+
+#[derive(Clone)]
 struct Position(f64, f64);
 
 #[derive(Clone)]
@@ -58,12 +64,17 @@ struct DiscreteContent {
     position: Position,
 }
 
+#[derive(Clone)]
+struct HTMLContent {
+    elements: Vec<Element>,
+}
+
 struct Browser {
     width: f64,
     height: f64,
     url: String,
     request: Request,
-    content: String,
+    content: HTMLContent,
     display_list: Vec<DiscreteContent>,
     scroll_position: i32,
     draw_handler: DrawHandler,
@@ -93,7 +104,9 @@ impl Browser {
             url: String::new(),
             display_list: Vec::new(),
             request: requester,
-            content: String::new(),
+            content: HTMLContent {
+                elements: Vec::new(),
+            },
             scroll_position: 0,
             draw_handler: DrawHandler::new(),
         }
@@ -108,79 +121,8 @@ impl Browser {
         String::from(gt_re.replace_all(&no_lt.as_str(), "&gt;"))
     }
 
-    fn lex(&mut self, source: &str, only_body: bool) -> String {
-        let mut in_angle = false;
-        let mut in_body = false;
-        let mut result = String::new();
-
-        let html_entities = HashMap::from([("&lt;", "<"), ("&gt;", ">")]);
-
-        let mut current_tag = String::new();
-        let mut possible_entity = String::new();
-
-        for character in source.chars() {
-            if character == '<' {
-                in_angle = true
-            } else if character == '>' {
-                if current_tag == "body" {
-                    in_body = true
-                } else if current_tag == "/body" {
-                    in_body = false
-                }
-                current_tag = String::new();
-                in_angle = false
-            } else if !in_angle {
-                if only_body && !in_body {
-                    // way to show only inside the body element
-                    continue;
-                }
-
-                if character == '&' || possible_entity.len() > 0 {
-                    // HTML entity interpretation
-                    if character == '&' && possible_entity.len() == 0 {
-                        possible_entity += &character.to_string();
-                    } else if possible_entity.len() > 0 {
-                        if possible_entity.len() > 25 {
-                            // No entity has an allowable name space large than 23 + 2, dump current buffer.
-                            result.push_str(&possible_entity);
-                            possible_entity = String::new();
-                            continue;
-                        }
-
-                        possible_entity += &character.to_string();
-
-                        if character == ';' {
-                            if html_entities.contains_key(&possible_entity.as_str()) {
-                                let string_value =
-                                    html_entities.get(&possible_entity.as_str()).unwrap_or(&"");
-                                result.push_str(string_value);
-                            } else {
-                                result.push_str(&possible_entity);
-                            }
-
-                            possible_entity = String::new();
-                        }
-                    }
-
-                    continue;
-                }
-
-                result.push(character);
-            } else if in_angle {
-                current_tag += &character.to_string();
-            }
-        }
-
-        if possible_entity.len() > 0 {
-            // If buffer still full, dump its content
-            result.push_str(&possible_entity);
-        }
-
-        result
-    }
-
     fn show(&mut self, source: &str, only_body: bool) {
-        self.content = self.lex(source, only_body);
+        self.content = lex(source, only_body);
     }
 
     fn load(&mut self, url: String) {
@@ -395,7 +337,63 @@ impl Component for Browser {
     }
 }
 
-fn layout(context: &Context, text: &str, window_width: f64) -> Vec<DiscreteContent> {
+fn lex(source: &str, only_body: bool) -> HTMLContent {
+    let mut in_angle = false;
+    let mut in_body = false;
+    let mut in_tag = false;
+    let mut result = Vec::new();
+
+    let html_entities = HashMap::from([("&lt;", "<"), ("&gt;", ">")]);
+
+    let mut buffer = String::new();
+
+    for character in source.chars() {
+        if character == '<' {
+            in_tag = true;
+
+            if buffer.len() > 0 {
+                if let Some(entity) = html_entities.get(&buffer.as_str()) {
+                    result.push(Element::Text(entity.to_string()));
+                } else {
+                    result.push(Element::Text(buffer));
+                }
+                buffer = String::new();
+            }
+        } else if character == '>' {
+            result.push(Element::Tag(buffer.clone()));
+
+            buffer = String::new();
+            in_tag = false;
+        } else if !in_tag {
+            if character == ';' && buffer.len() > 0 {
+                let potential_entity = buffer.clone() + &character.to_string().as_str();
+                if html_entities.contains_key(&potential_entity.as_str()) {
+                    let string_value = html_entities.get(&potential_entity.as_str()).unwrap_or(&"");
+                    result.push(Element::Text(string_value.to_string()));
+                } else {
+                    result.push(Element::Text(buffer));
+                }
+
+                buffer = String::new();
+
+                continue;
+            }
+
+            buffer += &character.to_string();
+        } else {
+            buffer += &character.to_string();
+        }
+    }
+
+    if buffer.len() > 0 && !in_tag {
+        // If buffer still has text content, dump its content
+        result.push(Element::Text(buffer));
+    }
+
+    HTMLContent { elements: result }
+}
+
+fn layout(context: &Context, content: &HTMLContent, window_width: f64) -> Vec<DiscreteContent> {
     set_font_defaults(context);
 
     let word_height = context.font_extents().unwrap().height();
@@ -405,27 +403,33 @@ fn layout(context: &Context, text: &str, window_width: f64) -> Vec<DiscreteConte
 
     let space_width = context.text_extents(" ").unwrap().x_advance();
 
-    let words = text.split_ascii_whitespace();
+    for element in &content.elements {
+        match element {
+            Element::Text(text) => {
+                let words = text.split_ascii_whitespace().collect::<Vec<&str>>();
+                for word in words {
+                    let word_width = context.text_extents(word).unwrap().x_advance();
 
-    for content in words {
-        let word_width = context.text_extents(content).unwrap().x_advance();
+                    let discrete_content = DiscreteContent {
+                        content: word.to_string(),
+                        position: Position(cursor_x, cursor_y),
+                    };
 
-        let discrete_content = DiscreteContent {
-            content: content.to_string(),
-            position: Position(cursor_x, cursor_y),
-        };
+                    display_list.push(discrete_content);
 
-        display_list.push(discrete_content);
+                    match word {
+                        _ => {
+                            cursor_x += word_width + space_width;
+                        }
+                    }
 
-        match content {
-            _ => {
-                cursor_x += word_width + space_width;
+                    if cursor_x + word_width >= window_width - H_STEP {
+                        cursor_x = H_STEP;
+                        cursor_y += word_height * 1.25;
+                    }
+                }
             }
-        }
-
-        if cursor_x + word_width >= window_width - H_STEP {
-            cursor_x = H_STEP;
-            cursor_y += word_height * 1.25;
+            Element::Tag(_) => (),
         }
     }
 
