@@ -13,7 +13,7 @@ use gtk::{gdk, glib};
 use log::LevelFilter;
 use regex::Regex;
 use relm4::abstractions::DrawHandler;
-use relm4::{gtk, tokio, Component, ComponentParts, ComponentSender, RelmApp, RelmWidgetExt};
+use relm4::{gtk, tokio, Component, ComponentParts, ComponentSender, RelmApp};
 use std::collections::HashMap;
 use std::fs;
 
@@ -38,12 +38,13 @@ impl Default for Options {
         }
     }
 }
+#[derive(Clone)]
+struct Position(f64, f64);
 
 #[derive(Clone)]
 struct DiscreteContent {
     content: String,
-    position: (f64, f64),
-    width: f64,
+    position: Position,
 }
 
 struct Browser {
@@ -401,8 +402,7 @@ fn layout(context: &Context, text: &str, window_width: f64) -> Vec<DiscreteConte
 
         let discrete_content = DiscreteContent {
             content: content.to_string(),
-            position: (cursor_x, cursor_y),
-            width: word_width,
+            position: Position(cursor_x, cursor_y),
         };
 
         display_list.push(discrete_content);
