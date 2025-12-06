@@ -1,3 +1,4 @@
+use crate::layout::{DiscreteContent, Element, HTMLContent, Layout, V_STEP};
 use crate::logger::CONSOLE_LOGGER;
 use crate::request::{Request, RequestOptions};
 use crate::uri::Scheme;
@@ -7,7 +8,7 @@ use core::panic;
 use std::sync::OnceLock;
 use std::time::Duration;
 
-use gtk::cairo::{Context, FontFace, FontSlant, FontWeight};
+use gtk::cairo::Context;
 use gtk::prelude::*;
 use gtk::{gdk, glib};
 use log::LevelFilter;
@@ -18,6 +19,7 @@ use std::collections::HashMap;
 use std::fs;
 
 pub mod cache;
+pub mod layout;
 pub mod logger;
 pub mod request;
 pub mod uri;
@@ -39,37 +41,6 @@ impl Default for Options {
     }
 }
 
-const DEFAULT_FONT_SIZE: f64 = 14.0;
-const DEFAULT_FONT_FAMILY: &str = "Arial";
-const DEFAULT_FONT_SLANT: FontSlant = FontSlant::Normal;
-const DEFAULT_FONT_WEIGHT: FontWeight = FontWeight::Normal;
-
-fn set_font_defaults(context: &Context) {
-    context.select_font_face(DEFAULT_FONT_FAMILY, DEFAULT_FONT_SLANT, DEFAULT_FONT_WEIGHT);
-    context.set_font_size(DEFAULT_FONT_SIZE);
-}
-
-#[derive(Clone)]
-enum Element {
-    Tag(String),
-    Text(String),
-}
-
-#[derive(Clone)]
-struct Position(f64, f64);
-
-#[derive(Clone)]
-struct DiscreteContent {
-    content: String,
-    position: Position,
-    font_face: FontFace,
-}
-
-#[derive(Clone)]
-struct HTMLContent {
-    elements: Vec<Element>,
-}
-
 struct Browser {
     width: f64,
     height: f64,
@@ -80,9 +51,6 @@ struct Browser {
     scroll_position: i32,
     draw_handler: DrawHandler,
 }
-
-const H_STEP: f64 = 13.0;
-const V_STEP: f64 = 18.0;
 
 const WIDTH: f64 = 600.0;
 const HEIGHT: f64 = 600.0;
@@ -105,9 +73,7 @@ impl Browser {
             url: String::new(),
             display_list: Vec::new(),
             request: requester,
-            content: HTMLContent {
-                elements: Vec::new(),
-            },
+            content: HTMLContent::new(Vec::new()),
             scroll_position: 0,
             draw_handler: DrawHandler::new(),
         }
@@ -290,29 +256,27 @@ impl Component for Browser {
             }
             AppMsg::ContentParsed => {
                 self.content = self.content.clone();
-                self.display_list = layout(&cx, &self.content, self.width);
+                self.display_list = Layout::from_html_content(&cx, &self.content, self.width);
             }
             AppMsg::Resize => {
                 self.width = self.draw_handler.width() as f64;
                 self.height = self.draw_handler.height() as f64;
-                self.display_list = layout(&cx, &self.content, self.width);
+                self.display_list = Layout::from_html_content(&cx, &self.content, self.width);
             }
             AppMsg::MouseScroll((_, dy)) => {
                 let scroll_distance = 10.0 * dy;
 
-                if self.scroll_position + scroll_distance as i32 > 0
-                    && self.display_list.last().unwrap().position.1
-                        > self.scroll_position as f64 + scroll_distance + self.height
-                {
+                let next_scroll_position = self.scroll_position + scroll_distance as i32;
+                let rendered_height =
+                    (self.display_list.last().unwrap().position.1 + V_STEP - self.height) as i32;
+
+                if next_scroll_position > 0 && rendered_height > next_scroll_position {
                     self.scroll_position =
                         self.scroll_position.wrapping_add(scroll_distance as i32);
-                } else if (self.scroll_position + scroll_distance as i32) < 0 {
+                } else if next_scroll_position < 0 {
                     self.scroll_position = 0;
-                } else if self.scroll_position + scroll_distance as i32
-                    > self.display_list.last().unwrap().position.1 as i32
-                {
-                    self.scroll_position =
-                        self.display_list.last().unwrap().position.1 as i32 - self.height as i32;
+                } else if next_scroll_position > (rendered_height as i32) {
+                    self.scroll_position = rendered_height as i32;
                 }
             }
         }
@@ -389,76 +353,7 @@ fn lex(source: &str) -> HTMLContent {
         result.push(Element::Text(buffer));
     }
 
-    HTMLContent { elements: result }
-}
-
-fn layout(context: &Context, content: &HTMLContent, window_width: f64) -> Vec<DiscreteContent> {
-    set_font_defaults(context);
-
-    let word_height = context.font_extents().unwrap().height();
-    let mut display_list: Vec<DiscreteContent> = Vec::new();
-    let mut cursor_x = H_STEP;
-    let mut cursor_y = word_height;
-
-    let space_width = context.text_extents(" ").unwrap().x_advance();
-
-    let mut font_slant = FontSlant::Normal;
-    let mut font_weight = FontWeight::Normal;
-
-    for element in &content.elements {
-        match element {
-            Element::Text(text) => {
-                let words = text.split_ascii_whitespace().collect::<Vec<&str>>();
-                for word in words {
-                    let word_width = context.text_extents(word).unwrap().x_advance();
-
-                    let font_face =
-                        FontFace::toy_create(DEFAULT_FONT_FAMILY, font_slant, font_weight)
-                            .expect("Failed to create font face");
-
-                    let discrete_content = DiscreteContent {
-                        content: word.to_string(),
-                        position: Position(cursor_x, cursor_y),
-                        font_face,
-                    };
-
-                    display_list.push(discrete_content);
-
-                    match word {
-                        _ => {
-                            cursor_x += word_width + space_width;
-                        }
-                    }
-
-                    if cursor_x + word_width >= window_width - H_STEP {
-                        cursor_x = H_STEP;
-                        cursor_y += word_height * 1.25;
-                    }
-                }
-            }
-            Element::Tag(tag) => {
-                match tag.as_str() {
-                    "i" | "em" => {
-                        font_slant = FontSlant::Italic;
-                    }
-                    "/i" | "/em" => {
-                        font_slant = FontSlant::Normal;
-                    }
-                    "b" | "strong" => {
-                        font_weight = FontWeight::Bold;
-                    }
-                    "/b" | "/strong" => {
-                        font_weight = FontWeight::Normal;
-                    }
-                    _ => {
-                        // Handle unknown tag
-                    }
-                }
-            }
-        }
-    }
-
-    display_list
+    HTMLContent::new(result)
 }
 
 fn draw_content(
@@ -467,7 +362,6 @@ fn draw_content(
     context: &Context,
     window_height: f64,
 ) {
-    set_font_defaults(context);
     context.set_source_rgba(0.0, 0.0, 0.0, 1.0);
 
     for content in display_list {
@@ -479,6 +373,7 @@ fn draw_content(
         }
 
         context.set_font_face(&content.font_face);
+        context.set_font_size(content.font_size);
 
         context.move_to(
             content.position.0,
