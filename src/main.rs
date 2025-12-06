@@ -7,7 +7,7 @@ use core::panic;
 use std::sync::OnceLock;
 use std::time::Duration;
 
-use gtk::cairo::{Context, FontSlant, FontWeight};
+use gtk::cairo::{Context, FontFace, FontSlant, FontWeight};
 use gtk::prelude::*;
 use gtk::{gdk, glib};
 use log::LevelFilter;
@@ -39,8 +39,8 @@ impl Default for Options {
     }
 }
 
-const DEFAULT_FONT_SIZE: f64 = 12.0;
-const DEFAULT_FONT_FAMILY: &str = "Sans";
+const DEFAULT_FONT_SIZE: f64 = 14.0;
+const DEFAULT_FONT_FAMILY: &str = "Arial";
 const DEFAULT_FONT_SLANT: FontSlant = FontSlant::Normal;
 const DEFAULT_FONT_WEIGHT: FontWeight = FontWeight::Normal;
 
@@ -62,6 +62,7 @@ struct Position(f64, f64);
 struct DiscreteContent {
     content: String,
     position: Position,
+    font_face: FontFace,
 }
 
 #[derive(Clone)]
@@ -121,8 +122,8 @@ impl Browser {
         String::from(gt_re.replace_all(&no_lt.as_str(), "&gt;"))
     }
 
-    fn show(&mut self, source: &str, only_body: bool) {
-        self.content = lex(source, only_body);
+    fn show(&mut self, source: &str) {
+        self.content = lex(source);
     }
 
     fn load(&mut self, url: String) {
@@ -138,10 +139,10 @@ impl Browser {
                 if uri.flags.contains_key(&String::from("view-source")) {
                     log::debug!("View-source flag found");
                     let transformed_response = Browser::transform(&response.data.as_str());
-                    self.show(&transformed_response, false)
+                    self.show(&transformed_response)
                 } else {
                     log::debug!("Rendering response");
-                    self.show(&response.data, true)
+                    self.show(&response.data)
                 }
             }
             Scheme::Data => {
@@ -152,13 +153,13 @@ impl Browser {
 
                 // Writing end-of-file.
                 let data = String::new() + path_data + "\r\n";
-                self.show(&data, false)
+                self.show(&data)
             }
             Scheme::File => {
                 log::debug!("Loading File URL");
 
                 let data = fs::read_to_string(&uri.path).expect("File not found...");
-                self.show(&data, false)
+                self.show(&data)
             }
             Scheme::VIEWSOURCE => panic!("Unexpected view-source scheme provided to browser."),
         }
@@ -337,9 +338,7 @@ impl Component for Browser {
     }
 }
 
-fn lex(source: &str, only_body: bool) -> HTMLContent {
-    let mut in_angle = false;
-    let mut in_body = false;
+fn lex(source: &str) -> HTMLContent {
     let mut in_tag = false;
     let mut result = Vec::new();
 
@@ -360,7 +359,7 @@ fn lex(source: &str, only_body: bool) -> HTMLContent {
                 buffer = String::new();
             }
         } else if character == '>' {
-            result.push(Element::Tag(buffer.clone()));
+            result.push(Element::Tag(buffer));
 
             buffer = String::new();
             in_tag = false;
@@ -403,6 +402,9 @@ fn layout(context: &Context, content: &HTMLContent, window_width: f64) -> Vec<Di
 
     let space_width = context.text_extents(" ").unwrap().x_advance();
 
+    let mut font_slant = FontSlant::Normal;
+    let mut font_weight = FontWeight::Normal;
+
     for element in &content.elements {
         match element {
             Element::Text(text) => {
@@ -410,9 +412,14 @@ fn layout(context: &Context, content: &HTMLContent, window_width: f64) -> Vec<Di
                 for word in words {
                     let word_width = context.text_extents(word).unwrap().x_advance();
 
+                    let font_face =
+                        FontFace::toy_create(DEFAULT_FONT_FAMILY, font_slant, font_weight)
+                            .expect("Failed to create font face");
+
                     let discrete_content = DiscreteContent {
                         content: word.to_string(),
                         position: Position(cursor_x, cursor_y),
+                        font_face,
                     };
 
                     display_list.push(discrete_content);
@@ -429,7 +436,25 @@ fn layout(context: &Context, content: &HTMLContent, window_width: f64) -> Vec<Di
                     }
                 }
             }
-            Element::Tag(_) => (),
+            Element::Tag(tag) => {
+                match tag.as_str() {
+                    "i" | "em" => {
+                        font_slant = FontSlant::Italic;
+                    }
+                    "/i" | "/em" => {
+                        font_slant = FontSlant::Normal;
+                    }
+                    "b" | "strong" => {
+                        font_weight = FontWeight::Bold;
+                    }
+                    "/b" | "/strong" => {
+                        font_weight = FontWeight::Normal;
+                    }
+                    _ => {
+                        // Handle unknown tag
+                    }
+                }
+            }
         }
     }
 
@@ -453,10 +478,13 @@ fn draw_content(
             continue;
         }
 
+        context.set_font_face(&content.font_face);
+
         context.move_to(
             content.position.0,
             content.position.1 - scroll_position as f64,
         );
+
         let text_rendering = context.show_text(&content.content.to_string());
 
         match text_rendering {
