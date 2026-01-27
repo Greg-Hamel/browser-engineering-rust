@@ -1,4 +1,4 @@
-use crate::layout::{DiscreteContent, Element, HTMLContent, Layout, V_STEP};
+use crate::layout::{DiscreteContent, Element, HTMLContent, Layout, Node, Text, V_STEP};
 use crate::logger::CONSOLE_LOGGER;
 use crate::request::{Request, RequestOptions};
 use crate::uri::Scheme;
@@ -316,16 +316,16 @@ fn lex(source: &str) -> HTMLContent {
 
             if buffer.len() > 0 {
                 if let Some(entity) = html_entities.get(&buffer.as_str()) {
-                    result.push(Element::Text(entity.to_string()));
+                    result.push(Node::Text(Text::new(entity.to_string())));
                 } else {
-                    result.push(Element::Text(buffer));
+                    result.push(Node::Text(Text::new(buffer)));
                 }
                 buffer = String::new();
             }
         } else if character == '>' {
             let buffer_split: Vec<&str> = buffer.split_ascii_whitespace().collect();
             let tag = buffer_split[0].to_string();
-            result.push(Element::Tag(tag));
+            result.push(Node::Element(Element::new(tag)));
 
             buffer = String::new();
             in_tag = false;
@@ -334,9 +334,9 @@ fn lex(source: &str) -> HTMLContent {
                 let potential_entity = buffer.clone() + &character.to_string().as_str();
                 if html_entities.contains_key(&potential_entity.as_str()) {
                     let string_value = html_entities.get(&potential_entity.as_str()).unwrap_or(&"");
-                    result.push(Element::Text(string_value.to_string()));
+                    result.push(Node::Text(Text::new(string_value.to_string())));
                 } else {
-                    result.push(Element::Text(buffer));
+                    result.push(Node::Text(Text::new(buffer)));
                 }
 
                 buffer = String::new();
@@ -352,7 +352,7 @@ fn lex(source: &str) -> HTMLContent {
 
     if buffer.len() > 0 && !in_tag {
         // If buffer still has text content, dump its content
-        result.push(Element::Text(buffer));
+        result.push(Node::Text(Text::new(buffer)));
     }
 
     HTMLContent::new(result)

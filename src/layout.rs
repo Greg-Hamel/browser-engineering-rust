@@ -8,18 +8,42 @@ pub const H_STEP: f64 = 13.0;
 pub const V_STEP: f64 = 18.0;
 
 #[derive(Clone)]
-pub enum Element {
-    Tag(String),
-    Text(String),
+pub struct Element {
+    tag: String,
+}
+
+impl Element {
+    pub fn new(tag: String) -> Self {
+        Element {
+            tag,
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct Text {
+    text: String,
+}
+
+impl Text {
+    pub fn new(text: String) -> Self {
+        Text { text }
+    }
+}
+
+#[derive(Clone)]
+pub enum Node {
+    Element(Element),
+    Text(Text),
 }
 
 #[derive(Clone)]
 pub struct HTMLContent {
-    elements: Vec<Element>,
+    elements: Vec<Node>,
 }
 
 impl HTMLContent {
-    pub fn new(elements: Vec<Element>) -> Self {
+    pub fn new(elements: Vec<Node>) -> Self {
         HTMLContent { elements }
     }
 }
@@ -83,14 +107,14 @@ impl Layout {
         for element in &content.elements {
             context.set_font_size(self.font_size);
             match element {
-                Element::Text(text) => {
-                    let words = text.split_ascii_whitespace().collect::<Vec<&str>>();
+                Node::Text(text) => {
+                    let words = text.text.split_ascii_whitespace().collect::<Vec<&str>>();
                     for word in words {
                         let discrete_content = self.word(context, word);
                         display_list.push(discrete_content);
                     }
                 }
-                Element::Tag(tag) => self.token(tag),
+                Node::Element(tag) => self.token(&tag.tag),
             }
         }
 
