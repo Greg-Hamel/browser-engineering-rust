@@ -77,11 +77,11 @@ impl Layout {
             FontFace::toy_create(&self.font_family, self.font_slant, self.font_weight)
                 .expect("Failed to create font face");
         context.set_font_face(&current_font_face);
-        context.set_font_size(self.font_size);
 
         let mut display_list: Vec<DiscreteContent> = Vec::new();
 
         for element in &content.elements {
+            context.set_font_size(self.font_size);
             match element {
                 Element::Text(text) => {
                     let words = text.split_ascii_whitespace().collect::<Vec<&str>>();
@@ -101,6 +101,10 @@ impl Layout {
         context.text_extents(" ").unwrap().x_advance()
     }
 
+    fn flush(&mut self) {
+        self.cursor_position = Position(H_STEP, self.cursor_position.1 + V_STEP);
+    }
+
     fn token(&mut self, token: &String) {
         match token.as_str() {
             "i" | "em" => {
@@ -114,6 +118,33 @@ impl Layout {
             }
             "/b" | "/strong" => {
                 self.font_weight = FontWeight::Normal;
+            }
+            "small" => {
+                self.font_size = self.font_size * 0.8;
+            }
+            "/small" => {
+                self.font_size = self.font_size / 0.8;
+            }
+            "big" => {
+                self.font_size = self.font_size * 1.2;
+            }
+            "/big" => {
+                self.font_size = self.font_size / 1.2;
+            }
+            "br" => {
+                self.flush();
+            }
+            "/p" => {
+                self.flush();
+                self.flush();
+            }
+            "h1" | "h2" | "h3" | "h4" | "h5" | "h6" => {
+                self.font_weight = FontWeight::Bold;
+                self.font_size = self.font_size * 1.5;
+            }
+            "/h1" | "/h2" | "/h3" | "/h4" | "/h5" | "/h6" => {
+                self.font_weight = FontWeight::Normal;
+                self.font_size = self.font_size / 1.5;
             }
             _ => {
                 // Handle unknown tag

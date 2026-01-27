@@ -133,7 +133,7 @@ impl Browser {
 
     pub fn run(&mut self) {
         // self.load(REQUEST_URL.get().expect("REQUEST_URL must be set"));
-        self.load(String::from("https://browser.engineering/http.html"));
+        self.load(String::from("https://browser.engineering/text.html"));
 
         log::debug!("Response Loaded");
     }
@@ -323,7 +323,9 @@ fn lex(source: &str) -> HTMLContent {
                 buffer = String::new();
             }
         } else if character == '>' {
-            result.push(Element::Tag(buffer));
+            let buffer_split: Vec<&str> = buffer.split_ascii_whitespace().collect();
+            let tag = buffer_split[0].to_string();
+            result.push(Element::Tag(tag));
 
             buffer = String::new();
             in_tag = false;
